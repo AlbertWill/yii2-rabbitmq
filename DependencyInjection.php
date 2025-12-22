@@ -118,7 +118,7 @@ class DependencyInjection implements BootstrapInterface
                 /**
                  * @var $routing Routing
                  */
-                $routing = \Yii::$container->get(sprintf(Configuration::ROUTING_SERVICE_NAME_CNN, $options['connection']), ['conn' => $connection]);
+                $routing = \Yii::$container->get(sprintf(Configuration::ROUTING_SERVICE_NAME, $options['connection']), ['conn' => $connection]);
                 /**
                  * @var $logger Logger
                  */
