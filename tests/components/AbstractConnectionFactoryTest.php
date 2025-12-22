@@ -27,7 +27,7 @@ class AbstractConnectionFactoryTest extends TestCase
         ];
 
         $factory = new AbstractConnectionFactory(AMQPLazyConnection::class, $testOptions);
-        $connection = $factory->createConnection();
+        $connection = $factory->createConnection($testOptions['name']);
         $this->assertInstanceOf(AbstractConnection::class, $connection);
     }
 }

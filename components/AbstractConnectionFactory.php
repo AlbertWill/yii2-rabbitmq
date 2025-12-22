@@ -25,12 +25,14 @@ class AbstractConnectionFactory
     }
 
     /**
-     * @return mixed
+     * 创建链接实例
+     * @param string $name 链接名称
+     * @return AbstractConnection
      */
-    public function createConnection() : AbstractConnection
+    public function createConnection(string $name) : AbstractConnection
     {
         if ($this->_parameters['ssl_context'] !== null) {
-            return new $this->_class(
+            $conn = new $this->_class(
                 $this->_parameters['host'],
                 $this->_parameters['port'],
                 $this->_parameters['user'],
@@ -45,8 +47,10 @@ class AbstractConnectionFactory
                     'channel_rpc_timeout' => $this->_parameters['channel_rpc_timeout'],
                 ]
             );
+            $conn->name = $name;
+            return $conn;
         }
-        return new $this->_class(
+        $conn = new $this->_class(
             $this->_parameters['host'],
             $this->_parameters['port'],
             $this->_parameters['user'],
@@ -63,6 +67,8 @@ class AbstractConnectionFactory
             $this->_parameters['heartbeat'],
             $this->_parameters['channel_rpc_timeout']
         );
+        $conn->name = $name;
+        return $conn;
     }
 
     /**

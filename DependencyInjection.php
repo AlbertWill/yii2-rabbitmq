@@ -55,8 +55,7 @@ class DependencyInjection implements BootstrapInterface
             $serviceAlias = sprintf(Configuration::CONNECTION_SERVICE_NAME, $options['name']);
             \Yii::$container->setSingleton($serviceAlias, function () use ($options) {
                 $factory = new AbstractConnectionFactory($options['type'], $options);
-                $connection = $factory->createConnection();
-                $connection->name = $options['name'];//补充连接名
+                $connection = $factory->createConnection($options['name']);
                 return $connection;
             });
         }
@@ -128,6 +127,8 @@ class DependencyInjection implements BootstrapInterface
                 \Yii::$container->invoke([$producer, 'setContentType'], [$options['content_type']]);
                 \Yii::$container->invoke([$producer, 'setDeliveryMode'], [$options['delivery_mode']]);
                 \Yii::$container->invoke([$producer, 'setSafe'], [$options['safe']]);
+                \Yii::$container->invoke([$producer, 'setMaxReconnectAttempts'], [$options['max_reconnect_attempts']]);
+                \Yii::$container->invoke([$producer, 'setReconnectDelay'], [$options['reconnect_delay']]);
                 \Yii::$container->invoke([$producer, 'setSerializer'], [$options['serializer']]);
 
                 return $producer;
@@ -169,6 +170,8 @@ class DependencyInjection implements BootstrapInterface
                 \Yii::$container->invoke([$consumer, 'setIdleTimeout'], [$options['idle_timeout']]);
                 \Yii::$container->invoke([$consumer, 'setIdleTimeoutExitCode'], [$options['idle_timeout_exit_code']]);
                 \Yii::$container->invoke([$consumer, 'setProceedOnException'], [$options['proceed_on_exception']]);
+                \Yii::$container->invoke([$consumer, 'setMaxReconnectAttempts'], [$options['max_reconnect_attempts']]);
+                \Yii::$container->invoke([$consumer, 'setReconnectDelay'], [$options['reconnect_delay']]);
                 \Yii::$container->invoke([$consumer, 'setDeserializer'], [$options['deserializer']]);
 
                 return $consumer;
@@ -296,9 +299,7 @@ class DependencyInjection implements BootstrapInterface
         // 重新注册连接
         \Yii::$container->setSingleton($serviceAlias, function () use ($options) {
             $factory = new AbstractConnectionFactory($options['type'], $options);
-            $connection = $factory->createConnection();
-            $connection->name = $options['name'];
-            return $connection;
+            return $factory->createConnection($options['name']);
         });
 
         return \Yii::$container->get($serviceAlias);

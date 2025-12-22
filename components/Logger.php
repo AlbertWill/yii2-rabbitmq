@@ -30,13 +30,13 @@ class Logger
             return;
         }
         if ($processFlag === ConsumerInterface::MSG_REQUEUE || false === $processFlag) {
-            $messageFormat = '%s - Message from queue `%s` was not processed and sent back to queue! Execution time: %s %s';
+            $messageFormat = '[%s]Message from queue `%s` was not processed and sent back to queue! Execution time: %s %s';
             $color = Console::FG_RED;
         } elseif ($processFlag === ConsumerInterface::MSG_REJECT) {
-            $messageFormat = '%s - Message from queue `%s` was not processed and dropped from queue! Execution time: %s %s';
+            $messageFormat = '[%s]Message from queue `%s` was not processed and dropped from queue! Execution time: %s %s';
             $color = Console::FG_RED;
         } else {
-            $messageFormat = '%s - Message from queue `%s` consumed successfully! Execution time: %s %s';
+            $messageFormat = '[%s]Message from queue `%s` consumed successfully! Execution time: %s %s';
             $color = Console::FG_GREEN;
         }
         $curDate = date('Y-m-d H:i:s');
@@ -118,6 +118,19 @@ class Logger
         }
 
         return Console::output($message);
+    }
+
+    /**
+     * debug模式下输出日志
+     * @param $message
+     * @param int $color
+     */
+    public function logDebug($message, $color = Console::FG_BLACK){
+        //debug 模式下才出书
+        if(defined('YII_DEBUG') && YII_DEBUG === true){
+            $msg =  '[' . date ( 'Y-m-d H:i:s' ) . ']' . $message;
+            $this->printInfo($msg, $color);
+        }
     }
 
     /**

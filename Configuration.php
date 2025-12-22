@@ -90,6 +90,8 @@ class Configuration extends Component
                 'safe' => true,
                 'content_type' => 'text/plain',
                 'delivery_mode' => 2,
+                'max_reconnect_attempts' => 3,//重连尝试次数
+                'reconnect_delay' => 2,//重连休息秒数(秒)
                 'serializer' => 'serialize',
             ],
         ],
@@ -106,6 +108,8 @@ class Configuration extends Component
                 'idle_timeout' => 0,
                 'idle_timeout_exit_code' => null,
                 'proceed_on_exception' => false,
+                'max_reconnect_attempts' => 3,//最大连接重试次数
+                'reconnect_delay' => 2,//重试间隔（秒）
                 'deserializer' => 'unserialize',
                 'systemd' => [
                     'memory_limit' => 0,

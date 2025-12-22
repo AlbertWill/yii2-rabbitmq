@@ -25,10 +25,11 @@ class Producer extends BaseRabbitMQ
 
     protected $name = 'unnamed';
 
-    //重连尝试次数
-    protected $maxReconnectAttempts = 3;
-    //重连休息秒数
-    protected $reconnectDelay = 2;
+    /** @var int 重连尝试次数 */
+    protected $maxReconnectAttempts;
+
+    /** @var int 重连休息秒数(秒) */
+    protected $reconnectDelay;
 
     /**
      * @param $contentType
@@ -106,6 +107,38 @@ class Producer extends BaseRabbitMQ
     }
 
     /**
+     * @return int
+     */
+    public function getMaxReconnectAttempts(): int
+    {
+        return $this->maxReconnectAttempts;
+    }
+
+    /**
+     * @param int $maxReconnectAttempts
+     */
+    public function setMaxReconnectAttempts(int $maxReconnectAttempts): void
+    {
+        $this->maxReconnectAttempts = $maxReconnectAttempts;
+    }
+
+    /**
+     * @return int
+     */
+    public function getReconnectDelay(): int
+    {
+        return $this->reconnectDelay;
+    }
+
+    /**
+     * @param int $reconnectDelay
+     */
+    public function setReconnectDelay(int $reconnectDelay): void
+    {
+        $this->reconnectDelay = $reconnectDelay;
+    }
+
+    /**
      * publish 的入口（覆盖父类方法）
      * 捕获常见连接/通道/IO 异常，触发重连并在重连成功后自动重试一次。
      * @param mixed $msgBody
@@ -127,6 +160,7 @@ class Producer extends BaseRabbitMQ
             if(!$this->isRecoverable($e)){
                 throw $e;
             }
+            $this->logger->logDebug("publish失败，准备重连[" . get_class($e) . "]:" . $e->getMessage());
         }
 
         try {
@@ -139,6 +173,7 @@ class Producer extends BaseRabbitMQ
             return;
         } catch (\Throwable $e2) {
             // 重试失败，则抛出异常
+            $this->logger->logDebug("重连后publish失败[" . get_class($e) . "]:" . $e->getMessage());
             throw $e2;
         }
     }
@@ -291,9 +326,11 @@ class Producer extends BaseRabbitMQ
                 // 重建 routing
                 $this->routing = new Routing($this->conn);
 
+                $this->logger->logDebug("RabbitMQ 连接重建完成（尝试成功）");
                 return;
 
             } catch (\Throwable $ex) {
+                $this->logger->logDebug("RabbitMQ重连失败（第{$i}次）: " . $ex->getMessage());
                 sleep($this->reconnectDelay);
             }
         }

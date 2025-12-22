@@ -48,14 +48,14 @@ class Consumer extends BaseRabbitMQ
 
     private $forceStop = false;
 
-    /** @var int 最大连接重试次数 */
-    protected $maxReconnectAttempts = 3;
-
     /** @var int 重试计数 */
-    protected $reconnectAttempts = 0;
+    private $reconnectAttempts = 0;
+
+    /** @var int 最大连接重试次数 */
+    protected $maxReconnectAttempts;
 
     /** @var int 重试间隔（秒） */
-    protected $reconnectDelay = 2;
+    protected $reconnectDelay;
 
     /**
      * Set the memory limit
@@ -209,6 +209,38 @@ class Consumer extends BaseRabbitMQ
     }
 
     /**
+     * @return int
+     */
+    public function getMaxReconnectAttempts(): int
+    {
+        return $this->maxReconnectAttempts;
+    }
+
+    /**
+     * @param int $maxReconnectAttempts
+     */
+    public function setMaxReconnectAttempts(int $maxReconnectAttempts): void
+    {
+        $this->maxReconnectAttempts = $maxReconnectAttempts;
+    }
+
+    /**
+     * @return int
+     */
+    public function getReconnectDelay(): int
+    {
+        return $this->reconnectDelay;
+    }
+
+    /**
+     * @param int $reconnectDelay
+     */
+    public function setReconnectDelay(int $reconnectDelay): void
+    {
+        $this->reconnectDelay = $reconnectDelay;
+    }
+
+    /**
      * Consume designated number of messages (0 means infinite)
      *
      * @param int $msgAmount
@@ -224,7 +256,6 @@ class Consumer extends BaseRabbitMQ
         $this->target = $msgAmount;
         $this->setup();
 
-        // At the end of the callback execution
         while (count($this->getChannel()->callbacks)) {
             if ($this->maybeStopConsumer()) {
                 break;
@@ -233,6 +264,8 @@ class Consumer extends BaseRabbitMQ
             try {
                 $this->getChannel()->wait(null, false, $this->getIdleTimeout());
             } catch (AMQPTimeoutException $e) {
+                $this->logger->logDebug("idle超时[" . get_class($e) . "]:" . $e->getMessage());
+
                 // 指定了退出码，直接退出进程
                 if (null !== $this->getIdleTimeoutExitCode()) {
                     return $this->getIdleTimeoutExitCode();
@@ -240,16 +273,22 @@ class Consumer extends BaseRabbitMQ
 
                 continue;
             }catch (AMQPConnectionClosedException | AMQPDataReadException | AMQPIOException | AMQPBasicCancelException $e) {
+                $this->logger->logDebug("连接断开[" . get_class($e) . "]:" . $e->getMessage());
+
                 //mq连接异常处理
                 $this->mqClosedException($e);
 
                 continue;
             } catch (AMQPProtocolChannelException | AMQPChannelClosedException $e) {
+                $this->logger->logDebug("通道异常[" . get_class($e) . "]:" . $e->getMessage());
+
                 //mq通道异常处理
                 $this->channelClosedException($e);
 
                 continue;
             } catch (\Exception $e) {
+                $this->logger->logDebug("捕获异常[" . get_class($e) . "]:" . $e->getMessage());
+
                 //捕获其他异常
                 throw $e;
             }
@@ -525,8 +564,10 @@ class Consumer extends BaseRabbitMQ
                 //重建channel通道
                 $this->setup();
                 $this->reconnectAttempts = 0;
+                $this->logger->logDebug("连接重建成功");
                 return;
             } catch (\Exception $reopenEx) {
+                $this->logger->logDebug("重建连接失败: {$reopenEx->getMessage()}");
 
                 if ($this->reconnectAttempts < $this->maxReconnectAttempts) {
                     sleep($this->reconnectDelay); // 等待再试
@@ -548,12 +589,16 @@ class Consumer extends BaseRabbitMQ
         try {
             $this->getChannel()->close();
         } catch (\Throwable $closeEx) {
+            $this->logger->logDebug("关闭通道时发生异常: {$closeEx->getMessage()}");
         }
 
         //重建channel通道
         try {
+            $this->logger->logDebug("开始重建通道...");
             $this->setup();
+            $this->logger->logDebug("通道重建成功！");
         } catch (\Exception $chanEx) {
+            $this->logger->logDebug("通道重建失败: {$chanEx->getMessage()}");
             throw $e;
         }
 
