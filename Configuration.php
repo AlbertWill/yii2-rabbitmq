@@ -19,7 +19,7 @@ class Configuration extends Component
     const CONNECTION_SERVICE_NAME = 'rabbit_mq.connection.%s';
     const CONSUMER_SERVICE_NAME = 'rabbit_mq.consumer.%s';
     const PRODUCER_SERVICE_NAME = 'rabbit_mq.producer.%s';
-    const ROUTING_SERVICE_NAME = 'rabbit_mq.routing';
+    const ROUTING_SERVICE_NAME = 'rabbit_mq.routing.%s';
     const LOGGER_SERVICE_NAME = 'rabbit_mq.logger';
 
     const DEFAULT_CONNECTION_NAME = 'default';
@@ -198,7 +198,7 @@ class Configuration extends Component
      */
     public function getRouting(AbstractConnection $connection)
     {
-        return Yii::$container->get(Configuration::ROUTING_SERVICE_NAME, ['conn' => $connection]);
+        return Yii::$container->get(sprintf(self::ROUTING_SERVICE_NAME, $connection->name), ['conn' => $connection]);
     }
 
     /**

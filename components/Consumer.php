@@ -7,9 +7,15 @@ use ErrorException;
 use mikemadisonweb\rabbitmq\events\RabbitMQConsumerEvent;
 use mikemadisonweb\rabbitmq\exceptions\RuntimeException;
 use PhpAmqpLib\Exception\AMQPTimeoutException;
+use PhpAmqpLib\Exception\AMQPBasicCancelException;
+use PhpAmqpLib\Exception\AMQPChannelClosedException;
+use PhpAmqpLib\Exception\AMQPConnectionClosedException;
+use PhpAmqpLib\Exception\AMQPDataReadException;
+use PhpAmqpLib\Exception\AMQPIOException;
+use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use PhpAmqpLib\Message\AMQPMessage;
 use Throwable;
-use yii\console\Controller;
+use yii\console\ExitCode;
 
 /**
  * Service that receives AMQP Messages
@@ -41,6 +47,15 @@ class Consumer extends BaseRabbitMQ
     private $consumed = 0;
 
     private $forceStop = false;
+
+    /** @var int 最大连接重试次数 */
+    protected $maxReconnectAttempts = 3;
+
+    /** @var int 重试计数 */
+    protected $reconnectAttempts = 0;
+
+    /** @var int 重试间隔（秒） */
+    protected $reconnectDelay = 2;
 
     /**
      * Set the memory limit
@@ -208,33 +223,43 @@ class Consumer extends BaseRabbitMQ
     {
         $this->target = $msgAmount;
         $this->setup();
+
         // At the end of the callback execution
-        while (count($this->getChannel()->callbacks))
-        {
-            if ($this->maybeStopConsumer())
-            {
+        while (count($this->getChannel()->callbacks)) {
+            if ($this->maybeStopConsumer()) {
                 break;
             }
-            try
-            {
+
+            try {
                 $this->getChannel()->wait(null, false, $this->getIdleTimeout());
-            }
-            catch (AMQPTimeoutException $e)
-            {
-                if (null !== $this->getIdleTimeoutExitCode())
-                {
+            } catch (AMQPTimeoutException $e) {
+                // 指定了退出码，直接退出进程
+                if (null !== $this->getIdleTimeoutExitCode()) {
                     return $this->getIdleTimeoutExitCode();
                 }
 
+                continue;
+            }catch (AMQPConnectionClosedException | AMQPDataReadException | AMQPIOException | AMQPBasicCancelException $e) {
+                //mq连接异常处理
+                $this->mqClosedException($e);
+
+                continue;
+            } catch (AMQPProtocolChannelException | AMQPChannelClosedException $e) {
+                //mq通道异常处理
+                $this->channelClosedException($e);
+
+                continue;
+            } catch (\Exception $e) {
+                //捕获其他异常
                 throw $e;
             }
-            if (!AMQP_WITHOUT_SIGNALS && extension_loaded('pcntl'))
-            {
+
+            if (!AMQP_WITHOUT_SIGNALS && extension_loaded('pcntl')) {
                 pcntl_signal_dispatch();
             }
         }
 
-        return Controller::EXIT_CODE_NORMAL;
+        return ExitCode::OK;
     }
 
     /**
@@ -484,5 +509,53 @@ class Consumer extends BaseRabbitMQ
         }
         $this->setQosOptions();
         $this->startConsuming();
+    }
+
+    /**
+     * mq连接断开异常处理
+     * @param $e
+     * @throws AMQPIOException
+     */
+    private function mqClosedException($e): void
+    {
+        for ($this->reconnectAttempts = 1; $this->reconnectAttempts <= $this->maxReconnectAttempts; $this->reconnectAttempts++) {
+            try {
+                //重建mq连接
+                $this->renew();
+                //重建channel通道
+                $this->setup();
+                $this->reconnectAttempts = 0;
+                return;
+            } catch (\Exception $reopenEx) {
+
+                if ($this->reconnectAttempts < $this->maxReconnectAttempts) {
+                    sleep($this->reconnectDelay); // 等待再试
+                }
+            }
+        }
+
+        // 抛出包含原始异常的新异常
+        throw new AMQPIOException("MQ连接重试失败（尝试次数: {$this->maxReconnectAttempts})", 0, $e);
+    }
+
+    /**
+     * mq通道异常处理
+     * @param $e
+     */
+    private function channelClosedException($e): void
+    {
+        // Channel 级别错误
+        try {
+            $this->getChannel()->close();
+        } catch (\Throwable $closeEx) {
+        }
+
+        //重建channel通道
+        try {
+            $this->setup();
+        } catch (\Exception $chanEx) {
+            throw $e;
+        }
+
     }
 }

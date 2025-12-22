@@ -10,6 +10,7 @@ use mikemadisonweb\rabbitmq\exceptions\InvalidConfigException;
 use PhpAmqpLib\Connection\AbstractConnection;
 use yii\base\Application;
 use yii\base\BootstrapInterface;
+use yii\di\NotInstantiableException;
 
 class DependencyInjection implements BootstrapInterface
 {
@@ -29,7 +30,7 @@ class DependencyInjection implements BootstrapInterface
         $config = $app->rabbitmq->getConfig();
         $this->registerLogger($config);
         $this->registerConnections($config);
-        $this->registerRouting($config);
+        $this->registerRoutines($config);
         $this->registerProducers($config);
         $this->registerConsumers($config);
         $this->addControllers($app);
@@ -54,7 +55,9 @@ class DependencyInjection implements BootstrapInterface
             $serviceAlias = sprintf(Configuration::CONNECTION_SERVICE_NAME, $options['name']);
             \Yii::$container->setSingleton($serviceAlias, function () use ($options) {
                 $factory = new AbstractConnectionFactory($options['type'], $options);
-                return $factory->createConnection();
+                $connection = $factory->createConnection();
+                $connection->name = $options['name'];//补充连接名
+                return $connection;
             });
         }
     }
@@ -76,6 +79,29 @@ class DependencyInjection implements BootstrapInterface
     }
 
     /**
+     * 注册Routing容器
+     * @param Configuration $config
+     */
+    protected function registerRoutines(Configuration $config)
+    {
+        foreach ($config->connections as $options) {
+            $serviceAlias = sprintf(Configuration::ROUTING_SERVICE_NAME, $options['name']);
+            \Yii::$container->setSingleton($serviceAlias, function ($container, $params) use ($config) {
+                $routing = new Routing($params['conn']);
+
+                //根据连接名称获取路由相关配置
+                list($queues, $exchanges, $bindings) = $this->getRoutingConfigByConnName($params['conn']->name, $config);
+
+                \Yii::$container->invoke([$routing, 'setQueues'], [$queues]);
+                \Yii::$container->invoke([$routing, 'setExchanges'], [$exchanges]);
+                \Yii::$container->invoke([$routing, 'setBindings'], [$bindings]);
+
+                return $routing;
+            });
+        }
+    }
+
+    /**
      * Register producers in service container
      * @param Configuration $config
      */
@@ -92,7 +118,7 @@ class DependencyInjection implements BootstrapInterface
                 /**
                  * @var $routing Routing
                  */
-                $routing = \Yii::$container->get(Configuration::ROUTING_SERVICE_NAME, ['conn' => $connection]);
+                $routing = \Yii::$container->get(sprintf(Configuration::ROUTING_SERVICE_NAME_CNN, $options['connection']), ['conn' => $connection]);
                 /**
                  * @var $logger Logger
                  */
@@ -126,7 +152,7 @@ class DependencyInjection implements BootstrapInterface
                 /**
                  * @var $routing Routing
                  */
-                $routing = \Yii::$container->get(Configuration::ROUTING_SERVICE_NAME, ['conn' => $connection]);
+                $routing = \Yii::$container->get(sprintf(Configuration::ROUTING_SERVICE_NAME, $options['connection']), ['conn' => $connection]);
                 /**
                  * @var $logger Logger
                  */
@@ -180,4 +206,102 @@ class DependencyInjection implements BootstrapInterface
 		    $app->controllerMap[Configuration::EXTENSION_CONTROLLER_ALIAS] = RabbitMQController::class;
 	    }
     }
+
+    /**
+     * 根据连接名称获取路由相关配置
+     * @param string $conn_name
+     * @param Configuration $config
+     * @return array[]
+     */
+    protected function getRoutingConfigByConnName(string $conn_name, Configuration $config){
+        /**
+         * 1、查找当前连接对应的队列名称
+         */
+        $queue_name_arr = [];
+        $connection_config_arr = array_merge($config->producers, $config->consumers);
+        foreach ($connection_config_arr as $cc_item){
+            if($cc_item['connection'] == $conn_name && !in_array($cc_item['name'], $queue_name_arr)){
+                $queue_name_arr[] = $cc_item['name'];
+            }
+        }
+
+        /**
+         * 2、过滤queues
+         */
+        $queues = [];
+        foreach ($config->queues as $k=>$queue){
+            if(in_array($queue['name'], $queue_name_arr)){
+                $queues[] = $queue;
+            }
+        }
+
+        /**
+         * 3、过滤bindings
+         */
+        $bindings = [];
+        $exchange_name_arr = [];//当前链接包含的交换机名称
+        foreach ($config->bindings as $k=>$binding){
+            if(in_array($binding['queue'], $queue_name_arr)){
+                $bindings[] = $binding;
+                if(!in_array($binding['exchange'], $exchange_name_arr)){
+                    $exchange_name_arr[] = $binding['exchange'];
+                }
+            }
+        }
+
+        /**
+         * 4、过滤exchanges
+         */
+        $exchanges = [];
+        foreach ($config->exchanges as $k=>$exchange){
+            if(in_array($exchange['name'], $exchange_name_arr)){
+                $exchanges[] = $exchange;
+            }
+        }
+
+        return [$queues, $exchanges, $bindings];
+    }
+
+    /**
+     * 重新创建指定连接的实例（用于重连）
+     * @param string $connectionName
+     * @return object|string
+     * @throws InvalidConfigException
+     * @throws NotInstantiableException
+     * @throws \yii\base\InvalidConfigException
+     */
+    public static function renewConnection(string $connectionName)
+    {
+        $app = \Yii::$app;
+        $config = $app->rabbitmq->getConfig();
+        $connections = $config->connections;
+
+        $options = null;
+        foreach ($connections as $connConfig) {
+            if ($connConfig['name'] === $connectionName) {
+                $options = $connConfig;
+                break;
+            }
+        }
+
+        if (empty($options)) {
+            throw new InvalidConfigException("无法找到 RabbitMQ 连接配置: {$connectionName}");
+        }
+
+        $serviceAlias = sprintf(Configuration::CONNECTION_SERVICE_NAME, $connectionName);
+
+        // 清除容器中的旧实例
+        \Yii::$container->clear($serviceAlias);
+
+        // 重新注册连接
+        \Yii::$container->setSingleton($serviceAlias, function () use ($options) {
+            $factory = new AbstractConnectionFactory($options['type'], $options);
+            $connection = $factory->createConnection();
+            $connection->name = $options['name'];
+            return $connection;
+        });
+
+        return \Yii::$container->get($serviceAlias);
+    }
+
 }
