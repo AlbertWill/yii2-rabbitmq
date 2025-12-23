@@ -151,7 +151,6 @@ class Producer extends BaseRabbitMQ
     public function publish($msgBody, string $exchangeName, string $routingKey = '', array $additionalProperties = [], array $headers = null)
     {
         try {
-            //调用父类方法publish消息
             $this->execPublish($msgBody, $exchangeName, $routingKey, $additionalProperties, $headers);
 
             return;
@@ -172,7 +171,6 @@ class Producer extends BaseRabbitMQ
 
             return;
         } catch (\Throwable $e2) {
-            // 重试失败，则抛出异常
             $this->logger->logDebug("重连后publish失败[" . get_class($e) . "]:" . $e->getMessage());
             throw $e2;
         }

@@ -55,8 +55,7 @@ class DependencyInjection implements BootstrapInterface
             $serviceAlias = sprintf(Configuration::CONNECTION_SERVICE_NAME, $options['name']);
             \Yii::$container->setSingleton($serviceAlias, function () use ($options) {
                 $factory = new AbstractConnectionFactory($options['type'], $options);
-                $connection = $factory->createConnection($options['name']);
-                return $connection;
+                return $factory->createConnection($options['name']);
             });
         }
     }
