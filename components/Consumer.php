@@ -264,7 +264,7 @@ class Consumer extends BaseRabbitMQ
             try {
                 $this->getChannel()->wait(null, false, $this->getIdleTimeout());
             } catch (AMQPTimeoutException $e) {
-                $this->logger->logDebug("idle超时[" . get_class($e) . "]:" . $e->getMessage());
+//                $this->logger->logDebug("idle超时[" . get_class($e) . "]:" . $e->getMessage());
 
                 // 指定了退出码，直接退出进程
                 if (null !== $this->getIdleTimeoutExitCode()) {
