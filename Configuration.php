@@ -105,7 +105,7 @@ class Configuration extends Component
                     'prefetch_count' => 0,
                     'global' => false,
                 ],
-                'idle_timeout' => 0,
+                'idle_timeout' => 60,//idle超时时间
                 'idle_timeout_exit_code' => null,
                 'proceed_on_exception' => false,
                 'max_reconnect_attempts' => 3,//最大连接重试次数
