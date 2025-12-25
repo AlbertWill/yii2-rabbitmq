@@ -126,7 +126,7 @@ class Logger
      * @param int $color
      */
     public function logDebug($message, $color = Console::FG_BLACK){
-        //debug 模式下才出书
+        //debug 模式下才输出
         if(defined('YII_DEBUG') && YII_DEBUG === true){
             $msg =  '[' . date ( 'Y-m-d H:i:s' ) . ']' . $message;
             $this->printInfo($msg, $color);

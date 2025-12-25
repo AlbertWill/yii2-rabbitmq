@@ -20,7 +20,7 @@ php composer.phar require mikemadisonweb/yii2-rabbitmq
 ```
 or add
 ```json
-"mikemadisonweb/yii2-rabbitmq": "^2.2.0"
+"albertwill/yii2-rabbitmq": "^2.8"
 ```
 to the require section of your `composer.json` file.
 
@@ -307,6 +307,8 @@ $rabbitmq_defaults = [
                 'content_type' => 'text/plain',
                 'delivery_mode' => 2,
                 'serializer' => 'serialize',
+                'max_reconnect_attempts' => 3,//重连尝试次数
+                'reconnect_delay' => 2,//重连休息秒数(秒)
             ],
         ],
         'consumers' => [
@@ -319,9 +321,11 @@ $rabbitmq_defaults = [
                     'prefetch_count' => 0,
                     'global' => false,
                 ],
-                'idle_timeout' => 0,
+                 'idle_timeout' => 60,//idle超时时间
                 'idle_timeout_exit_code' => null,
                 'proceed_on_exception' => false,
+                'max_reconnect_attempts' => 3,//最大连接重试次数
+                'reconnect_delay' => 2,//重试间隔（秒）
                 'deserializer' => 'unserialize',
             ],
         ],
