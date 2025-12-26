@@ -5,6 +5,8 @@ namespace mikemadisonweb\rabbitmq;
 use mikemadisonweb\rabbitmq\components\Consumer;
 use mikemadisonweb\rabbitmq\components\Producer;
 use mikemadisonweb\rabbitmq\components\Routing;
+use mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore;
+use mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore;
 use mikemadisonweb\rabbitmq\exceptions\InvalidConfigException;
 use PhpAmqpLib\Connection\AbstractConnection;
 use PhpAmqpLib\Connection\AMQPLazyConnection;
@@ -110,6 +112,11 @@ class Configuration extends Component
                 'proceed_on_exception' => false,
                 'max_reconnect_attempts' => 3,//最大连接重试次数
                 'reconnect_delay' => 2,//重试间隔（秒）
+                'semaphore' => [
+//                    'type'=>IncrSemaphore::class,//非必要
+//                    'limit'=>3,//如果使用信号量控制，则这个值必须为正整数
+//                    'acquire_sleep'=>30,//获取信号量失败时的等待间隔时间（秒）
+                ],
                 'deserializer' => 'unserialize',
                 'systemd' => [
                     'memory_limit' => 0,
@@ -123,9 +130,17 @@ class Configuration extends Component
             'print_console' => true,
             'system_memory' => false,
         ],
+        'semaphore' => [//默认信号量配置
+            'type'=>HashSemaphore::class,
+            'redis_component_name'=>'redis',
+            'key'=>'',//这里用consumers中的 name拼接特定前缀，避免多个项目使用同一个 redis 导致冲突
+            'limit'=>-1,//默认值-1代表不使用信号量控制
+            'ttl'=>300,//默认值300秒
+            'acquire_sleep'=>60,//获取信号量失败时的等待间隔时间（秒）
+        ]
     ];
 
-    public $auto_declare = null;
+    public $auto_declare = true;
     public $connections = [];
     public $producers = [];
     public $consumers = [];

@@ -57,6 +57,9 @@ class Consumer extends BaseRabbitMQ
     /** @var int 重试间隔（秒） */
     protected $reconnectDelay;
 
+    /** @var \mikemadisonweb\rabbitmq\components\semaphore\Semaphore|null 信号量实例 */
+    protected $semaphore;
+
     /**
      * Set the memory limit
      *
@@ -241,6 +244,22 @@ class Consumer extends BaseRabbitMQ
     }
 
     /**
+     * @param \mikemadisonweb\rabbitmq\components\semaphore\Semaphore|null $semaphore
+     */
+    public function setSemaphore($semaphore): void
+    {
+        $this->semaphore = $semaphore;
+    }
+
+    /**
+     * @return \mikemadisonweb\rabbitmq\components\semaphore\Semaphore|null
+     */
+    public function getSemaphore()
+    {
+        return $this->semaphore;
+    }
+
+    /**
      * Consume designated number of messages (0 means infinite)
      *
      * @param int $msgAmount
@@ -257,14 +276,26 @@ class Consumer extends BaseRabbitMQ
         $this->setup();
 
         while (count($this->getChannel()->callbacks)) {
+
+            $this->logger->logDebug("消费消息开始=========>Start");
+
             if ($this->maybeStopConsumer()) {
                 break;
             }
 
             try {
+
+                /**
+                 * TODO  获取尝试获取并发名额，获取不到名额则等待
+                 */
+                $this->logger->logDebug("TODO  获取尝试获取并发名额，获取不到名额则等待");
+
+
                 $this->getChannel()->wait(null, false, $this->getIdleTimeout());
+
+
             } catch (AMQPTimeoutException $e) {
-//                $this->logger->logDebug("idle超时[" . get_class($e) . "]:" . $e->getMessage());
+                $this->logger->logDebug("idle超时[" . get_class($e) . "]:" . $e->getMessage());
 
                 // 指定了退出码，直接退出进程
                 if (null !== $this->getIdleTimeoutExitCode()) {
@@ -291,11 +322,25 @@ class Consumer extends BaseRabbitMQ
 
                 //捕获其他异常
                 throw $e;
+            }finally{
+
+                /**
+                 * TODO  释放名额
+                 */
+                $this->logger->logDebug("TODO  finally 释放名额");
+
+
             }
 
             if (!AMQP_WITHOUT_SIGNALS && extension_loaded('pcntl')) {
+
+                $this->logger->logDebug("调用 pcntl_signal_dispatch");
+
                 pcntl_signal_dispatch();
             }
+
+            $this->logger->logDebug("消费消息完成=============OK");
+
         }
 
         return ExitCode::OK;
@@ -317,8 +362,17 @@ class Consumer extends BaseRabbitMQ
      */
     public function stopDaemon()
     {
+
+        $this->logger->logDebug("stopDaemon55555");
+
         $this->forceStop = true;
         $this->stopConsuming();
+
+        /**
+         * TODO 判断是否已释放名额，没有释放则释放
+         */
+
+
         $this->logger->printInfo("\nConsumer stopped by user.\n");
     }
 
@@ -383,6 +437,9 @@ class Consumer extends BaseRabbitMQ
      */
     protected function maybeStopConsumer(): bool
     {
+
+        $this->logger->logDebug("maybeStopConsumer=======Maybe");
+
         if (extension_loaded('pcntl') && (defined('AMQP_WITHOUT_SIGNALS') ? !AMQP_WITHOUT_SIGNALS : true))
         {
             if (!function_exists('pcntl_signal_dispatch'))

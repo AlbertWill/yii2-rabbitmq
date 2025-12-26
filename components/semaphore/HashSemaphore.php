@@ -15,9 +15,9 @@ class HashSemaphore extends Semaphore
      */
     private $token;
 
-    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600)
+    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 0)
     {
-        parent::__construct($redis, $key, $limit, $ttl);
+        parent::__construct($redis, $key, $limit, $ttl, $acquireSleep);
         $this->token = self::genToken();
     }
 
