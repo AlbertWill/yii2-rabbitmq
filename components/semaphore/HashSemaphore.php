@@ -2,6 +2,7 @@
 
 namespace mikemadisonweb\rabbitmq\components\semaphore;
 
+use yii\redis\Connection;
 
 /**
  * 基于 Set/Hash token 方式控制的全局信号量
@@ -14,9 +15,9 @@ class HashSemaphore extends Semaphore
      */
     private $token;
 
-    public function __construct(string $key, int $limit, int $ttl = 600)
+    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600)
     {
-        parent::__construct($key, $limit, $ttl);
+        parent::__construct($redis, $key, $limit, $ttl);
         $this->token = self::genToken();
     }
 

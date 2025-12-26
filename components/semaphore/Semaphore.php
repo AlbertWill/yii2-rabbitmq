@@ -2,7 +2,7 @@
 
 namespace mikemadisonweb\rabbitmq\components\semaphore;
 
-use Yii;
+use yii\redis\Connection;
 
 /**
  * 信号量抽象基类
@@ -26,13 +26,20 @@ abstract class Semaphore
     protected $ttl;
 
     /**
+     * @var Connection Redis 实例，需要实现 eval(string $script, int $numKeys, array $keys, array $args) 方法
+     */
+    protected $redis;
+
+    /**
      * 构造函数
+     * @param Connection $redis Redis 连接实例（yii\redis\Connection）
      * @param string $key Redis key
      * @param int $limit 并发限制数
      * @param int $ttl 过期时间（秒）
      */
-    public function __construct(string $key, int $limit, int $ttl = 600)
+    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600)
     {
+        $this->redis = $redis;
         $this->key = $key;
         $this->limit = $limit;
         $this->ttl = $ttl;
@@ -67,7 +74,7 @@ abstract class Semaphore
         if (empty($lua)) {
             throw new \InvalidArgumentException('Lua script cannot be empty');
         }
-        
-        return Yii::$app->redis->eval($lua, count($keys), $keys, $args);
+
+        return $this->redis->eval($lua, count($keys), $keys, $args);
     }
 }
