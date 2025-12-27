@@ -98,6 +98,101 @@ class ConfigurationTest extends TestCase
             ['Connection in consumer not exist', ['connections' => [['host' => 'rabbitmq']], 'consumers' => [['name' => 'smth', 'connection' => 'default2']]], InvalidConfigException::class],
             ['Named connection not specified in producer', ['connections' => [['host' => 'rabbitmq', 'name' => 'default2']], 'producers' => [['name' => 'smth']]], InvalidConfigException::class],
             ['Duplicate names in producer', array_merge($required, ['producers' => [['name' => 'smth'], ['name' => 'smth']]]), InvalidConfigException::class],
+            // Semaphore configuration tests
+            ['Semaphore is not an array', array_merge($required, ['semaphore' => 'not_an_array']), InvalidConfigException::class],
+            ['Semaphore type is not a string', array_merge($required, ['semaphore' => ['type' => 123]]), InvalidConfigException::class],
+            ['Semaphore class does not exist', array_merge($required, ['semaphore' => ['type' => 'NonExistentClass']]), InvalidConfigException::class],
+            ['Semaphore class must extend Semaphore', array_merge($required, ['semaphore' => ['type' => 'stdClass']]), InvalidConfigException::class],
+            ['Semaphore redis_component_name is not a string', array_merge($required, ['semaphore' => ['redis_component_name' => 123]]), InvalidConfigException::class],
+            ['Semaphore limit is not an integer', array_merge($required, ['semaphore' => ['limit' => 'not_int']]), InvalidConfigException::class],
+            ['Semaphore ttl is not a positive integer', array_merge($required, ['semaphore' => ['ttl' => 0]]), InvalidConfigException::class],
+            ['Semaphore ttl is not a positive integer (negative)', array_merge($required, ['semaphore' => ['ttl' => -1]]), InvalidConfigException::class],
+            ['Semaphore ttl is not an integer', array_merge($required, ['semaphore' => ['ttl' => 'not_int']]), InvalidConfigException::class],
+            ['Semaphore acquire_sleep is not a non-negative integer', array_merge($required, ['semaphore' => ['acquire_sleep' => -1]]), InvalidConfigException::class],
+            ['Semaphore acquire_sleep is not an integer', array_merge($required, ['semaphore' => ['acquire_sleep' => 'not_int']]), InvalidConfigException::class],
+            // Consumer semaphore configuration tests
+            ['Consumer semaphore is not an array', array_merge($required, ['consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => 'not_an_array']]]), InvalidConfigException::class],
+            ['Consumer semaphore contains unknown option', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['unknown' => 'value']]]]), InvalidConfigException::class],
+            ['Consumer semaphore type is not a string', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['type' => 123]]]]), InvalidConfigException::class],
+            ['Consumer semaphore class does not exist', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['type' => 'NonExistentClass']]]]), InvalidConfigException::class],
+            ['Consumer semaphore class must extend Semaphore', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['type' => 'stdClass']]]]), InvalidConfigException::class],
+            ['Consumer semaphore limit is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['limit' => 'not_int']]]]), InvalidConfigException::class],
+            ['Consumer semaphore ttl is not a positive integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['ttl' => 0]]]]), InvalidConfigException::class],
+            ['Consumer semaphore ttl is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['ttl' => 'not_int']]]]), InvalidConfigException::class],
+            ['Consumer semaphore acquire_sleep is not a non-negative integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => -1]]]]), InvalidConfigException::class],
+            ['Consumer semaphore acquire_sleep is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => 'not_int']]]]), InvalidConfigException::class],
         ];
+    }
+
+    public function testValidSemaphoreConfig()
+    {
+        $this->mockApplication([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'localhost',
+                        ],
+                    ],
+                    'semaphore' => [
+                        'type' => \mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore::class,
+                        'redis_component_name' => 'redis',
+                        'limit' => 10,
+                        'ttl' => 300,
+                        'acquire_sleep' => 60,
+                    ],
+                ],
+            ],
+        ]);
+        $config = \Yii::$app->rabbitmq->getConfig();
+        $this->assertInstanceOf(Configuration::class, $config);
+        $this->assertEquals(\mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore::class, $config->semaphore['type']);
+        $this->assertEquals('redis', $config->semaphore['redis_component_name']);
+        $this->assertEquals(10, $config->semaphore['limit']);
+        $this->assertEquals(300, $config->semaphore['ttl']);
+        $this->assertEquals(60, $config->semaphore['acquire_sleep']);
+    }
+
+    public function testValidConsumerSemaphoreConfig()
+    {
+        $this->mockApplication([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'localhost',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => 'test-queue',
+                        ],
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => 'test-consumer',
+                            'callbacks' => [
+                                'test-queue' => 'callback',
+                            ],
+                            'semaphore' => [
+                                'type' => \mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore::class,
+                                'limit' => 5,
+                                'ttl' => 600,
+                                'acquire_sleep' => 30,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        $config = \Yii::$app->rabbitmq->getConfig();
+        $this->assertInstanceOf(Configuration::class, $config);
+        $consumer = $config->consumers[0];
+        $this->assertEquals(\mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore::class, $consumer['semaphore']['type']);
+        $this->assertEquals(5, $consumer['semaphore']['limit']);
+        $this->assertEquals(600, $consumer['semaphore']['ttl']);
+        $this->assertEquals(30, $consumer['semaphore']['acquire_sleep']);
     }
 }

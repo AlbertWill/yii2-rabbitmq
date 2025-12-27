@@ -5,10 +5,14 @@ namespace mikemadisonweb\rabbitmq\tests;
 use mikemadisonweb\rabbitmq\components\{
     Consumer, ConsumerInterface, Logger, Producer, Routing
 };
+use mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore;
+use mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore;
+use mikemadisonweb\rabbitmq\components\semaphore\Semaphore;
 use mikemadisonweb\rabbitmq\Configuration;
 use mikemadisonweb\rabbitmq\controllers\RabbitMQController;
 use mikemadisonweb\rabbitmq\exceptions\InvalidConfigException;
 use PhpAmqpLib\Connection\AbstractConnection;
+use yii\redis\Connection;
 
 class DependencyInjectionTest extends TestCase
 {
@@ -69,7 +73,7 @@ class DependencyInjectionTest extends TestCase
         $container = \Yii::$container;
         $connection = $container->get(sprintf(Configuration::CONNECTION_SERVICE_NAME, $name));
         $this->assertInstanceOf(AbstractConnection::class, $connection);
-        $this->assertInstanceOf(Routing::class, $container->get(Configuration::ROUTING_SERVICE_NAME, ['conn' => $connection]));
+        $this->assertInstanceOf(Routing::class, $container->get(sprintf(Configuration::ROUTING_SERVICE_NAME, $name), ['conn' => $connection]));
         $this->assertInstanceOf(Producer::class, $container->get(sprintf(Configuration::PRODUCER_SERVICE_NAME, $name)));
         $this->assertInstanceOf(Consumer::class, $container->get(sprintf(Configuration::CONSUMER_SERVICE_NAME, $name)));
         $this->assertInstanceOf(Logger::class, $container->get(Configuration::LOGGER_SERVICE_NAME));
@@ -93,7 +97,7 @@ class DependencyInjectionTest extends TestCase
         $container = \Yii::$container;
         $conn = $container->get(sprintf(Configuration::CONNECTION_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME));
         $this->assertInstanceOf(AbstractConnection::class, $conn);
-        $router = $container->get(Configuration::ROUTING_SERVICE_NAME, ['conn' => $conn]);
+        $router = $container->get(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), ['conn' => $conn]);
         // Declare nothing as nothing was configured
         $this->assertTrue($router->declareAll($conn));
     }
@@ -278,4 +282,228 @@ class DependencyInjectionTest extends TestCase
         $this->expectException(InvalidConfigException::class);
         \Yii::$app->rabbitmq->getConsumer($consumerName);
     }
+
+    public function testBootstrapConsumerWithSemaphore()
+    {
+        $consumerName = 'test-consumer';
+        $queueName = 'test-queue';
+        $callbackName = 'CallbackMock';
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        // 创建 Redis mock
+        $redis = $this->createMock(Connection::class);
+        
+        $this->loadExtension([
+            'id' => 'testapp',
+            'components' => [
+                'redis' => $redis,
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'unreal',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queueName,
+                        ]
+                    ],
+                    'semaphore' => [
+                        'type' => HashSemaphore::class,
+                        'redis_component_name' => 'redis',
+                        'limit' => 10,
+                        'ttl' => 300,
+                        'acquire_sleep' => 60,
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumerName,
+                            'callbacks' => [
+                                $queueName => $callbackName,
+                            ],
+                            'semaphore' => [
+                                'limit' => 5, // Consumer 特定配置覆盖全局配置
+                            ],
+                        ]
+                    ],
+                ],
+            ],
+        ]);
+        $consumer = \Yii::$container->get(sprintf(Configuration::CONSUMER_SERVICE_NAME, $consumerName));
+        $this->assertInstanceOf(Consumer::class, $consumer);
+        
+        // 验证 semaphore 已注入
+        $semaphore = $this->getInaccessibleProperty($consumer, 'semaphore');
+        $this->assertInstanceOf(Semaphore::class, $semaphore);
+        $this->assertInstanceOf(HashSemaphore::class, $semaphore);
+        
+        // 验证配置合并：limit 使用 consumer 配置，其他使用全局配置
+        $this->assertEquals(5, $this->getInaccessibleProperty($semaphore, 'limit'));
+        $this->assertEquals(300, $this->getInaccessibleProperty($semaphore, 'ttl'));
+        $this->assertEquals(60, $this->getInaccessibleProperty($semaphore, 'acquireSleep'));
+    }
+
+    public function testBootstrapConsumerWithoutSemaphoreWhenLimitZero()
+    {
+        $consumerName = 'test-consumer';
+        $queueName = 'test-queue';
+        $callbackName = 'CallbackMock';
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        $this->loadExtension([
+            'id' => 'testapp',
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'unreal',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queueName,
+                        ]
+                    ],
+                    'semaphore' => [
+                        'type' => HashSemaphore::class,
+                        'redis_component_name' => 'redis',
+                        'limit' => 0, // limit <= 0，不使用信号量
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumerName,
+                            'callbacks' => [
+                                $queueName => $callbackName,
+                            ],
+                        ]
+                    ],
+                ],
+            ],
+        ]);
+        $consumer = \Yii::$container->get(sprintf(Configuration::CONSUMER_SERVICE_NAME, $consumerName));
+        $this->assertInstanceOf(Consumer::class, $consumer);
+        
+        // 验证 semaphore 为 null
+        $semaphore = $this->getInaccessibleProperty($consumer, 'semaphore');
+        $this->assertNull($semaphore);
+    }
+
+    public function testBootstrapConsumerSemaphoreConfigMerge()
+    {
+        $consumerName = 'test-consumer';
+        $queueName = 'test-queue';
+        $callbackName = 'CallbackMock';
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        // 创建 Redis mock
+        $redis = $this->createMock(Connection::class);
+        
+        $this->loadExtension([
+            'id' => 'testapp',
+            'components' => [
+                'redis' => $redis,
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'unreal',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queueName,
+                        ]
+                    ],
+                    'semaphore' => [
+                        'type' => HashSemaphore::class,
+                        'redis_component_name' => 'redis',
+                        'limit' => 10,
+                        'ttl' => 300,
+                        'acquire_sleep' => 60,
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumerName,
+                            'callbacks' => [
+                                $queueName => $callbackName,
+                            ],
+                            'semaphore' => [
+                                'type' => IncrSemaphore::class, // Consumer 覆盖类型
+                                'limit' => 5, // Consumer 覆盖 limit
+                                'ttl' => 600, // Consumer 覆盖 ttl
+                                // acquire_sleep 使用全局配置
+                            ],
+                        ]
+                    ],
+                ],
+            ],
+        ]);
+        $consumer = \Yii::$container->get(sprintf(Configuration::CONSUMER_SERVICE_NAME, $consumerName));
+        $semaphore = $this->getInaccessibleProperty($consumer, 'semaphore');
+        
+        // 验证配置合并：Consumer 配置覆盖全局配置
+        $this->assertInstanceOf(IncrSemaphore::class, $semaphore);
+        $this->assertEquals(5, $this->getInaccessibleProperty($semaphore, 'limit'));
+        $this->assertEquals(600, $this->getInaccessibleProperty($semaphore, 'ttl'));
+        $this->assertEquals(60, $this->getInaccessibleProperty($semaphore, 'acquireSleep')); // 使用全局配置
+    }
+
+    public function testBootstrapConsumerSemaphoreRedisComponentMissing()
+    {
+        $consumerName = 'test-consumer';
+        $queueName = 'test-queue';
+        $callbackName = 'CallbackMock';
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        $this->loadExtension([
+            'id' => 'testapp',
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'host' => 'unreal',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queueName,
+                        ]
+                    ],
+                    'semaphore' => [
+                        'type' => HashSemaphore::class,
+                        'redis_component_name' => 'redis',
+                        'limit' => 10,
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumerName,
+                            'callbacks' => [
+                                $queueName => $callbackName,
+                            ],
+                        ]
+                    ],
+                ],
+            ],
+        ]);
+        
+        $this->expectException(InvalidConfigException::class);
+        $this->expectExceptionMessage("Redis component 'redis' is not configured.");
+        \Yii::$app->rabbitmq->getConsumer($consumerName);
+    }
+
 }

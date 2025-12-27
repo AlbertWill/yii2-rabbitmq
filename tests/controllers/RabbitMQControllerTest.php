@@ -5,6 +5,7 @@ namespace mikemadisonweb\rabbitmq\tests\controllers;
 use mikemadisonweb\rabbitmq\components\Consumer;
 use mikemadisonweb\rabbitmq\components\Producer;
 use mikemadisonweb\rabbitmq\components\Routing;
+use mikemadisonweb\rabbitmq\components\semaphore\Semaphore;
 use mikemadisonweb\rabbitmq\Configuration;
 use mikemadisonweb\rabbitmq\controllers\RabbitMQController;
 use mikemadisonweb\rabbitmq\tests\TestCase;
@@ -89,7 +90,8 @@ class RabbitMQControllerTest extends TestCase
         $routing->expects($this->exactly(2))
             ->method('declareAll')
             ->willReturnOnConsecutiveCalls(false, true);
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        // ROUTING_SERVICE_NAME 需要连接名称参数
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('declare-all');
         $this->assertSame(Controller::EXIT_CODE_ERROR, $response);
         $response = $this->controller->runAction('declare-all');
@@ -104,7 +106,7 @@ class RabbitMQControllerTest extends TestCase
             ->willReturnOnConsecutiveCalls(true, false);
         $routing->expects($this->once())
             ->method('declareQueue');
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('declare-queue', ['queue-name']);
         $this->assertSame(Controller::EXIT_CODE_ERROR, $response);
         $response = $this->controller->runAction('declare-queue', ['queue-name']);
@@ -119,7 +121,7 @@ class RabbitMQControllerTest extends TestCase
             ->willReturnOnConsecutiveCalls(true, false);
         $routing->expects($this->once())
             ->method('declareExchange');
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('declare-exchange', ['exchange-name']);
         $this->assertSame(Controller::EXIT_CODE_ERROR, $response);
         $response = $this->controller->runAction('declare-exchange', ['exchange-name']);
@@ -131,9 +133,9 @@ class RabbitMQControllerTest extends TestCase
         $this->controller->interactive = false;
         $routing                       = $this->createMock(Routing::class);
         $routing->expects($this->once())
-            ->method('deleteAll')
-            ->willReturnOnConsecutiveCalls(false, true);
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+            ->method('deleteAll');
+        // ROUTING_SERVICE_NAME 需要连接名称参数
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('delete-all');
         $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
     }
@@ -144,7 +146,7 @@ class RabbitMQControllerTest extends TestCase
         $routing                       = $this->createMock(Routing::class);
         $routing->expects($this->once())
             ->method('deleteQueue');
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('delete-queue', ['queue-name']);
         $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
     }
@@ -155,7 +157,7 @@ class RabbitMQControllerTest extends TestCase
         $routing                       = $this->createMock(Routing::class);
         $routing->expects($this->once())
             ->method('deleteExchange');
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('delete-exchange', ['exchange-name']);
         $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
     }
@@ -166,8 +168,58 @@ class RabbitMQControllerTest extends TestCase
         $routing                       = $this->createMock(Routing::class);
         $routing->expects($this->once())
             ->method('purgeQueue');
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, $routing);
+        \Yii::$container->setSingleton(sprintf(Configuration::ROUTING_SERVICE_NAME, Configuration::DEFAULT_CONNECTION_NAME), $routing);
         $response = $this->controller->runAction('purge-queue', ['queue-name']);
+        $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
+    }
+
+    public function testConsumeActionWithSemaphore()
+    {
+        $name = 'consumer-with-semaphore';
+        $consumer = $this->getMockBuilder(Consumer::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['getConsumerTag', 'consume', 'setMemoryLimit'])
+            ->getMock();
+        
+        // 注意：semaphore 的 acquire_wait 是在 consume() 方法内部调用的
+        // 由于我们 mock 了 consume() 方法，所以不会真正执行 acquire_wait
+        // 这个测试主要验证控制器能正常调用 consume 方法
+        $consumer->expects($this->once())
+            ->method('consume')
+            ->with(0)
+            ->willReturn(Controller::EXIT_CODE_NORMAL);
+        $consumer->expects($this->once())
+            ->method('setMemoryLimit')
+            ->with(1024);
+        
+        \Yii::$container->set(sprintf(Configuration::CONSUMER_SERVICE_NAME, $name), $consumer);
+        $this->controller->debug = 'false';
+        $this->controller->memoryLimit = '1024';
+        $response = $this->controller->runAction('consume', [$name]);
+        $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
+    }
+
+    public function testConsumeActionWithoutSemaphore()
+    {
+        $name = 'consumer-without-semaphore';
+        $consumer = $this->getMockBuilder(Consumer::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['getConsumerTag', 'consume', 'setMemoryLimit'])
+            ->getMock();
+        
+        // 不设置 semaphore（null）
+        $consumer->expects($this->once())
+            ->method('consume')
+            ->with(0)
+            ->willReturn(Controller::EXIT_CODE_NORMAL);
+        $consumer->expects($this->once())
+            ->method('setMemoryLimit')
+            ->with(1024);
+        
+        \Yii::$container->set(sprintf(Configuration::CONSUMER_SERVICE_NAME, $name), $consumer);
+        $this->controller->debug = 'false';
+        $this->controller->memoryLimit = '1024';
+        $response = $this->controller->runAction('consume', [$name]);
         $this->assertSame(Controller::EXIT_CODE_NORMAL, $response);
     }
 }

@@ -15,3 +15,6 @@ Thumbs.db
 composer.lock
 vendor
 build
+phpunit.phar
+.phpunit.result.cache
+*.bak

@@ -37,6 +37,13 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
 
     protected function getVendorPath()
     {
+        // 优先查找本地 vendor（不是符号链接）
+        $localVendor = dirname(__DIR__) . '/vendor';
+        if (is_dir($localVendor) && !is_link($localVendor)) {
+            return $localVendor;
+        }
+        
+        // 回退到外层 vendor
         $vendor = dirname(__DIR__, 2) . '/vendor';
         if (!is_dir($vendor)) {
             $vendor = dirname(__DIR__, 4);
@@ -130,5 +137,21 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
         $this->mockApplication($config);
         $di = new DependencyInjection();
         $di->bootstrap(\Yii::$app);
+    }
+
+    /**
+     * 创建一个禁用了输出的 Logger 实例（用于测试）
+     * @return \mikemadisonweb\rabbitmq\components\Logger
+     */
+    protected function createSilentLogger()
+    {
+        $logger = new \mikemadisonweb\rabbitmq\components\Logger();
+        $logger->options = [
+            'log' => false,
+            'category' => 'application',
+            'print_console' => false,
+            'system_memory' => false,
+        ];
+        return $logger;
     }
 }

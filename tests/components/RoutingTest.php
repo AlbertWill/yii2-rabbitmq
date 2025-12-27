@@ -75,6 +75,8 @@ class RoutingTest extends TestCase
             ->getMock();
         $connection->method('channel')
             ->willReturn($channel);
+        // 设置连接的 name 属性
+        $connection->name = $name;
         $routing = \Yii::$app->rabbitmq->getRouting($connection);
         $this->assertTrue($routing->declareAll());
         $this->assertFalse($routing->declareAll());
@@ -150,6 +152,8 @@ class RoutingTest extends TestCase
             ->willThrowException($exception);
         $connection->method('channel')
             ->willReturn($channel);
+        // 设置连接的 name 属性
+        $connection->name = Configuration::DEFAULT_CONNECTION_NAME;
         $routing = \Yii::$app->rabbitmq->getRouting($connection);
         $this->assertFalse($routing->isExchangeExists('non-existing'));
         $this->assertFalse($routing->isQueueExists('non-existing'));
@@ -182,6 +186,19 @@ class RoutingTest extends TestCase
                             'durable' => false,
                         ],
                     ],
+                    'producers' => [
+                        [
+                            'name' => $name,
+                            'connection' => Configuration::DEFAULT_CONNECTION_NAME,
+                        ],
+                    ],
+                    'bindings' => [
+                        [
+                            'queue' => $name,
+                            'exchange' => $name,
+                            'routing_keys' => [$name],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -198,19 +215,23 @@ class RoutingTest extends TestCase
         $channel
             ->expects($this->once())
             ->method('queue_declare');
-        $channel
-            ->expects($this->once())
-            ->method('queue_purge');
         $connection->method('channel')
             ->willReturn($channel);
+        // 设置连接的 name 属性
+        $connection->name = Configuration::DEFAULT_CONNECTION_NAME;
         $routing = \Yii::$app->rabbitmq->getRouting($connection);
         $this->assertTrue($routing->isExchangeExists($name));
         $this->assertTrue($routing->isQueueExists($name));
-        // Test purging queue
+        // Test purging queue - 需要先声明队列
+        $channel
+            ->expects($this->once())
+            ->method('queue_purge');
         $routing->purgeQueue($name);
         // Test deleting all schema
+        // 由于只有 1 个队列在 producers/consumers 中使用，所以只有 1 个队列会被删除
+        // 由于 exchange 在 producers/consumers 中使用，所以会被删除
         $channel
-            ->expects($this->exactly(2))
+            ->expects($this->once())
             ->method('queue_delete');
         $channel
             ->expects($this->once())

@@ -5,7 +5,7 @@
         colors="true"
         beStrictAboutOutputDuringTests="false"
         beStrictAboutTestsThatDoNotTestAnything="true"
-        verbose="true"
+        verbose="false"
         bootstrap="./tests/bootstrap.php"
         convertErrorsToExceptions="true"
         convertNoticesToExceptions="true"
