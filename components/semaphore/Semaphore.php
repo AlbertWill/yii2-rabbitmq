@@ -106,7 +106,7 @@ abstract class Semaphore
     /**
      * 执行 Lua 脚本的辅助方法
      * 自动处理 Redis 连接断开和重试
-     * 
+     *
      * @param string $lua Lua 脚本
      * @param array $keys 键的数组
      * @param array $args 参数的数组
@@ -135,8 +135,8 @@ abstract class Semaphore
     /**
      * 确保 Redis 连接是活跃的
      * 如果连接不存在或已断开，尝试重新连接
-     * 
-     * @throws \yii\redis\Exception 当连接失败时抛出异常
+     *
+     * @throws \yii\db\Exception 当连接失败时抛出异常
      */
     protected function ensureConnection(): void
     {
@@ -148,7 +148,7 @@ abstract class Semaphore
     /**
      * 执行带重试的 Redis 操作
      * 当遇到连接异常时自动重试，适用于长时间运行的消费者进程
-     * 
+     *
      * @param callable $operation 要执行的操作（闭包函数）
      * @return mixed 操作的返回值
      * @throws \RuntimeException 当所有重试都失败时抛出异常
@@ -161,13 +161,13 @@ abstract class Semaphore
             try {
                 // 确保连接是活跃的
                 $this->ensureConnection();
-                
+
                 // 执行操作
                 return $operation();
             } catch (\yii\redis\SocketException $e) {
                 // Redis 连接异常，尝试重连
                 $lastException = $e;
-                
+
                 if ($attempt < $this->maxRetries - 1) {
                     // 关闭旧连接并等待后重试
                     try {
@@ -175,12 +175,12 @@ abstract class Semaphore
                     } catch (\Exception $closeEx) {
                         // 忽略关闭时的异常
                     }
-                    
+
                     // 等待后重试
                     if ($this->retryInterval > 0) {
                         usleep($this->retryInterval);
                     }
-                    
+
                     // 继续下一次重试
                     continue;
                 }
@@ -197,7 +197,7 @@ abstract class Semaphore
         }
 
         // 所有重试都失败
-        $message = "Redis semaphore operation failed after {$this->maxRetries} attempts: " . 
+        $message = "Redis semaphore operation failed after {$this->maxRetries} attempts: " .
                    ($lastException ? $lastException->getMessage() : 'Unknown error');
         $code = $lastException ? (int)$lastException->getCode() : 0;
         throw new \RuntimeException($message, $code, $lastException);
