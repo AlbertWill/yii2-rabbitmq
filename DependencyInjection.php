@@ -158,7 +158,13 @@ class DependencyInjection implements BootstrapInterface
                  * @var $logger Logger
                  */
                 $logger = \Yii::$container->get(Configuration::LOGGER_SERVICE_NAME);
-                $consumer = new Consumer($connection, $routing, $logger, $autoDeclare);
+
+                /**
+                 * @var $semaphore Semaphore|null
+                 */
+                $semaphore = $this->createSemaphore($options, $config);
+
+                $consumer = new Consumer($connection, $routing, $logger, $autoDeclare, $semaphore);
                 $queues = [];
                 foreach ($options['callbacks'] as $queueName => $callback) {
                     $callbackClass = $this->getCallbackClass($callback);
@@ -173,12 +179,6 @@ class DependencyInjection implements BootstrapInterface
                 \Yii::$container->invoke([$consumer, 'setMaxReconnectAttempts'], [$options['max_reconnect_attempts']]);
                 \Yii::$container->invoke([$consumer, 'setReconnectDelay'], [$options['reconnect_delay']]);
                 \Yii::$container->invoke([$consumer, 'setDeserializer'], [$options['deserializer']]);
-
-                // 创建并注入 semaphore 实例
-                $semaphore = $this->createSemaphore($options, $config);
-                if ($semaphore !== null) {
-                    \Yii::$container->invoke([$consumer, 'setSemaphore'], [$semaphore]);
-                }
 
                 return $consumer;
             });
@@ -321,56 +321,61 @@ class DependencyInjection implements BootstrapInterface
      */
     protected function createSemaphore(array $consumerOptions, Configuration $config): ?Semaphore
     {
-        // 获取全局 semaphore 默认配置
-        $defaultSemaphoreConfig = Configuration::DEFAULTS['semaphore'];
-        
-        // 合并 consumer 特定的 semaphore 配置
-        $semaphoreConfig = array_replace_recursive($defaultSemaphoreConfig, $consumerOptions['semaphore'] ?? []);
-        
+        // 获取全局 semaphore 配置（已合并默认值）
+        $globalSemaphoreConfig = $config->semaphore;
+
+        // 获取 consumer 特定的 semaphore 配置（只包含 type、limit、ttl、acquire_sleep）
+        $consumerSemaphoreConfig = $consumerOptions['semaphore'] ?? [];
+
+        // 合并配置：全局配置作为基础，consumer 配置覆盖（但 consumer 中不允许 redis_component_name）
+        // 对于允许 consumer 配置的字段，优先使用 consumer 配置，否则使用全局配置
+        $type = $consumerSemaphoreConfig['type'] ?? $globalSemaphoreConfig['type'] ?? null;
+        $limit = $consumerSemaphoreConfig['limit'] ?? $globalSemaphoreConfig['limit'] ?? -1;
+        $ttl = $consumerSemaphoreConfig['ttl'] ?? $globalSemaphoreConfig['ttl'] ?? 300;
+        $acquireSleep = $consumerSemaphoreConfig['acquire_sleep'] ?? $globalSemaphoreConfig['acquire_sleep'] ?? 60;
+        // redis_component_name 只能从全局配置获取
+        $redisComponentName = $globalSemaphoreConfig['redis_component_name'] ?? null;
+
         // 如果 limit <= 0，不使用信号量控制
-        $limit = $semaphoreConfig['limit'] ?? $defaultSemaphoreConfig['limit'];
         if ($limit <= 0) {
             return null;
         }
-        
+
         // 验证必要的配置项
-        if (empty($semaphoreConfig['type'])) {
-            throw new InvalidConfigException('Semaphore type is required when limit > 0.');
+        if (empty($type)) {
+            throw new InvalidConfigException('Semaphore type is required when limit > 0. Please configure it in global semaphore config or consumer semaphore config.');
         }
-        
-        if (empty($semaphoreConfig['redis_component_name'])) {
-            throw new InvalidConfigException('Semaphore redis_component_name is required when limit > 0.');
+
+        if (empty($redisComponentName)) {
+            throw new InvalidConfigException('Semaphore redis_component_name is required when limit > 0. Please configure it in global semaphore config.');
         }
-        
+
         // 获取 Redis 组件
-        $redisComponentName = $semaphoreConfig['redis_component_name'];
         if (!\Yii::$app->has($redisComponentName)) {
             throw new InvalidConfigException("Redis component '{$redisComponentName}' is not configured.");
         }
         $redis = \Yii::$app->get($redisComponentName);
-        
-        // 生成 key，如果为空则使用 consumer name 拼接前缀
-        $key = $semaphoreConfig['key'] ?? '';
-        if (empty($key)) {
-            $key = 'rabbitmq:semaphore:' . $consumerOptions['name'];
+
+        // 检查应用ID，确保不同项目使用不同的Redis key前缀
+        $appId = \Yii::$app->id ?? null;
+        if (empty($appId)) {
+            throw new InvalidConfigException('Yii::$app->id is required for semaphore key generation to avoid conflicts between different projects.');
         }
-        
-        // 获取其他配置项
-        $ttl = $semaphoreConfig['ttl'] ?? $defaultSemaphoreConfig['ttl'];
-        $acquireSleep = $semaphoreConfig['acquire_sleep'] ?? $defaultSemaphoreConfig['acquire_sleep'];
-        
+
+        // 按照固定规则自动生成：rabbitmq:semaphore:{app_id}:{consumer_name}，避免多个项目使用同一个 redis 导致冲突
+        $key = 'rabbitmq:semaphore:' . $appId . ':' . $consumerOptions['name'];
+
         // 验证 semaphore 类型
-        $semaphoreType = $semaphoreConfig['type'];
-        if (!class_exists($semaphoreType)) {
-            throw new InvalidConfigException("Semaphore class '{$semaphoreType}' does not exist.");
+        if (!class_exists($type)) {
+            throw new InvalidConfigException("Semaphore class '{$type}' does not exist.");
         }
-        
-        if (!is_subclass_of($semaphoreType, Semaphore::class)) {
-            throw new InvalidConfigException("Semaphore class '{$semaphoreType}' must extend " . Semaphore::class);
+
+        if (!is_subclass_of($type, Semaphore::class)) {
+            throw new InvalidConfigException("Semaphore class '{$type}' must extend " . Semaphore::class);
         }
-        
+
         // 创建 semaphore 实例
-        return new $semaphoreType($redis, $key, $limit, $ttl, $acquireSleep);
+        return new $type($redis, $key, $limit, $ttl, $acquireSleep);
     }
 
 }

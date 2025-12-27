@@ -29,11 +29,12 @@ local token = ARGV[1]
 local limit = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
 
--- 添加 token，SADD 返回 1 表示新添加，0 表示已存在（理论上不应该发生）
+-- 先添加 token（SADD 返回 1 表示新添加，0 表示已存在）
 local added = redis.call("SADD", key, token)
+-- 获取当前 Set 中的元素数量
 local count = redis.call("SCARD", key)
 
--- 如果超过限制，移除刚添加的 token
+-- 如果超过限制，移除刚添加的 token 并返回失败
 if count > limit then
     redis.call("SREM", key, token)
     return 0

@@ -7,6 +7,7 @@ use mikemadisonweb\rabbitmq\components\Producer;
 use mikemadisonweb\rabbitmq\components\Routing;
 use mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore;
 use mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore;
+use mikemadisonweb\rabbitmq\components\semaphore\Semaphore;
 use mikemadisonweb\rabbitmq\exceptions\InvalidConfigException;
 use PhpAmqpLib\Connection\AbstractConnection;
 use PhpAmqpLib\Connection\AMQPLazyConnection;
@@ -113,9 +114,10 @@ class Configuration extends Component
                 'max_reconnect_attempts' => 3,//最大连接重试次数
                 'reconnect_delay' => 2,//重试间隔（秒）
                 'semaphore' => [
-//                    'type'=>IncrSemaphore::class,//非必要
-//                    'limit'=>3,//如果使用信号量控制，则这个值必须为正整数
-//                    'acquire_sleep'=>30,//获取信号量失败时的等待间隔时间（秒）
+                    'type' => null,//信号量类型，必须是 Semaphore 的子类
+                    'limit' => null,//如果使用信号量控制，则这个值必须为正整数
+                    'ttl' => null,//过期时间（秒）
+                    'acquire_sleep' => null,//获取信号量失败时的等待间隔时间（秒）
                 ],
                 'deserializer' => 'unserialize',
                 'systemd' => [
@@ -133,7 +135,6 @@ class Configuration extends Component
         'semaphore' => [//默认信号量配置
             'type'=>HashSemaphore::class,
             'redis_component_name'=>'redis',
-            'key'=>'',//这里用consumers中的 name拼接特定前缀，避免多个项目使用同一个 redis 导致冲突
             'limit'=>-1,//默认值-1代表不使用信号量控制
             'ttl'=>300,//默认值300秒
             'acquire_sleep'=>60,//获取信号量失败时的等待间隔时间（秒）
@@ -148,6 +149,7 @@ class Configuration extends Component
     public $exchanges = [];
     public $bindings = [];
     public $logger = [];
+    public $semaphore = [];
 
     protected $isLoaded = false;
 
@@ -274,6 +276,50 @@ class Configuration extends Component
         }
 
         $this->validateArrayFields($this->logger, self::DEFAULTS['logger']);
+
+        // 校验全局 semaphore 配置
+        if (!is_array($this->semaphore)) {
+            throw new InvalidConfigException("Option `semaphore` should be of type array.");
+        }
+
+        $this->validateArrayFields($this->semaphore, self::DEFAULTS['semaphore']);
+
+        // 校验 semaphore 配置的各个字段
+        if (isset($this->semaphore['type']) && $this->semaphore['type'] !== null) {
+            if (!is_string($this->semaphore['type'])) {
+                throw new InvalidConfigException("Semaphore option `type` should be of type string.");
+            }
+            if (!class_exists($this->semaphore['type'])) {
+                throw new InvalidConfigException("Semaphore class '{$this->semaphore['type']}' does not exist.");
+            }
+            if (!is_subclass_of($this->semaphore['type'], Semaphore::class)) {
+                throw new InvalidConfigException("Semaphore class '{$this->semaphore['type']}' must extend " . Semaphore::class);
+            }
+        }
+
+        if (isset($this->semaphore['redis_component_name']) && $this->semaphore['redis_component_name'] !== null) {
+            if (!is_string($this->semaphore['redis_component_name'])) {
+                throw new InvalidConfigException("Semaphore option `redis_component_name` should be of type string.");
+            }
+        }
+
+        if (isset($this->semaphore['limit']) && $this->semaphore['limit'] !== null) {
+            if (!is_int($this->semaphore['limit'])) {
+                throw new InvalidConfigException("Semaphore option `limit` should be of type integer.");
+            }
+        }
+
+        if (isset($this->semaphore['ttl']) && $this->semaphore['ttl'] !== null) {
+            if (!is_int($this->semaphore['ttl']) || $this->semaphore['ttl'] <= 0) {
+                throw new InvalidConfigException("Semaphore option `ttl` should be a positive integer.");
+            }
+        }
+
+        if (isset($this->semaphore['acquire_sleep']) && $this->semaphore['acquire_sleep'] !== null) {
+            if (!is_int($this->semaphore['acquire_sleep']) || $this->semaphore['acquire_sleep'] < 0) {
+                throw new InvalidConfigException("Semaphore option `acquire_sleep` should be a non-negative integer.");
+            }
+        }
     }
 
     /**
@@ -388,6 +434,52 @@ class Configuration extends Component
             if (isset($consumer['deserializer']) && !is_callable($consumer['deserializer'])) {
                 throw new InvalidConfigException('Consumer `deserializer` option should be a callable.');
             }
+
+            // 校验 consumer 的 semaphore 配置
+            if (isset($consumer['semaphore'])) {
+                if (!is_array($consumer['semaphore'])) {
+                    throw new InvalidConfigException("Consumer `{$consumer['name']}` option `semaphore` should be of type array.");
+                }
+
+                // 验证允许的字段（只允许 type、limit、ttl、acquire_sleep，不允许 redis_component_name）
+                $allowedSemaphoreFields = ['type', 'limit', 'ttl', 'acquire_sleep'];
+                $undeclaredFields = array_diff_key($consumer['semaphore'], array_flip($allowedSemaphoreFields));
+                if (!empty($undeclaredFields)) {
+                    $asString = json_encode($undeclaredFields);
+                    throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore configuration contains unknown options: {$asString}");
+                }
+
+                // 校验各个字段的类型和值
+                if (isset($consumer['semaphore']['type']) && $consumer['semaphore']['type'] !== null) {
+                    if (!is_string($consumer['semaphore']['type'])) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `type` should be of type string.");
+                    }
+                    if (!class_exists($consumer['semaphore']['type'])) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore class '{$consumer['semaphore']['type']}' does not exist.");
+                    }
+                    if (!is_subclass_of($consumer['semaphore']['type'], Semaphore::class)) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore class '{$consumer['semaphore']['type']}' must extend " . Semaphore::class);
+                    }
+                }
+
+                if (isset($consumer['semaphore']['limit']) && $consumer['semaphore']['limit'] !== null) {
+                    if (!is_int($consumer['semaphore']['limit'])) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `limit` should be of type integer.");
+                    }
+                }
+
+                if (isset($consumer['semaphore']['ttl']) && $consumer['semaphore']['ttl'] !== null) {
+                    if (!is_int($consumer['semaphore']['ttl']) || $consumer['semaphore']['ttl'] <= 0) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `ttl` should be a positive integer.");
+                    }
+                }
+
+                if (isset($consumer['semaphore']['acquire_sleep']) && $consumer['semaphore']['acquire_sleep'] !== null) {
+                    if (!is_int($consumer['semaphore']['acquire_sleep']) || $consumer['semaphore']['acquire_sleep'] < 0) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `acquire_sleep` should be a non-negative integer.");
+                    }
+                }
+            }
         }
     }
 
@@ -461,6 +553,15 @@ class Configuration extends Component
             foreach ($defaults['logger'] as $key => $option) {
                 if (!isset($this->logger[$key])) {
                     $this->logger[$key] = $option;
+                }
+            }
+        }
+        if (empty($this->semaphore)) {
+            $this->semaphore = $defaults['semaphore'];
+        } else {
+            foreach ($defaults['semaphore'] as $key => $option) {
+                if (!isset($this->semaphore[$key])) {
+                    $this->semaphore[$key] = $option;
                 }
             }
         }
