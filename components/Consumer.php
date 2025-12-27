@@ -290,8 +290,6 @@ class Consumer extends BaseRabbitMQ
         try {
             while (count($this->getChannel()->callbacks)) {
 
-                $this->logger->logDebug("消费消息开始=========>Start");
-
                 if ($this->maybeStopConsumer()) {
                     break;
                 }
@@ -308,13 +306,8 @@ class Consumer extends BaseRabbitMQ
                 }
 
                 if (!AMQP_WITHOUT_SIGNALS && extension_loaded('pcntl')) {
-
-                    $this->logger->logDebug("调用 pcntl_signal_dispatch");
-
                     pcntl_signal_dispatch();
                 }
-
-                $this->logger->logDebug("消费消息完成=============OK");
 
             }
         } finally {
@@ -414,9 +407,6 @@ class Consumer extends BaseRabbitMQ
      */
     protected function maybeStopConsumer(): bool
     {
-
-        $this->logger->logDebug("maybeStopConsumer=======Maybe");
-
         if (extension_loaded('pcntl') && (defined('AMQP_WITHOUT_SIGNALS') ? !AMQP_WITHOUT_SIGNALS : true))
         {
             if (!function_exists('pcntl_signal_dispatch'))
@@ -711,12 +701,9 @@ class Consumer extends BaseRabbitMQ
         }
 
         try {
-            $this->logger->logDebug("尝试获取并发名额...");
             $this->semaphore->acquire_wait();
             $this->semaphoreAcquired = true;
-            $this->logger->logDebug("成功获取并发名额");
         } catch (\Exception $e) {
-            $this->logger->logDebug("获取并发名额失败[" . get_class($e) . "]:" . $e->getMessage());
             // 获取失败时确保状态一致
             $this->semaphoreAcquired = false;
             // 抛出更详细的异常信息，包含消费者名称和信号量配置信息
@@ -738,11 +725,10 @@ class Consumer extends BaseRabbitMQ
             return;
         }
 
-        $this->logger->logDebug("释放并发名额");
         try {
             $this->semaphore->release();
         } catch (\Exception $e) {
-            $this->logger->logDebug("释放并发名额失败[" . get_class($e) . "]:" . $e->getMessage());
+            // 释放失败不影响主流程，继续执行
         }
         $this->semaphoreAcquired = false;
     }
@@ -761,7 +747,6 @@ class Consumer extends BaseRabbitMQ
         try {
             $this->semaphore->heartbeat();
         } catch (\Exception $e) {
-            $this->logger->logDebug("心跳刷新失败[" . get_class($e) . "]:" . $e->getMessage());
             // 心跳失败不影响主流程，继续执行
         }
     }
