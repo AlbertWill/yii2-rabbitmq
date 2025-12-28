@@ -6,7 +6,6 @@ use mikemadisonweb\rabbitmq\components\Consumer;
 use mikemadisonweb\rabbitmq\components\Producer;
 use mikemadisonweb\rabbitmq\components\Routing;
 use mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore;
-use mikemadisonweb\rabbitmq\components\semaphore\IncrSemaphore;
 use mikemadisonweb\rabbitmq\components\semaphore\Semaphore;
 use mikemadisonweb\rabbitmq\exceptions\InvalidConfigException;
 use PhpAmqpLib\Connection\AbstractConnection;
@@ -402,6 +401,16 @@ class Configuration extends Component
             if (isset($producer['serializer']) && !is_callable($producer['serializer'])) {
                 throw new InvalidConfigException('Producer `serializer` option should be a callable.');
             }
+            if (isset($producer['max_reconnect_attempts'])) {
+                if (!is_int($producer['max_reconnect_attempts']) || $producer['max_reconnect_attempts'] < 1) {
+                    throw new InvalidConfigException('Producer option `max_reconnect_attempts` should be a positive integer (>= 1).');
+                }
+            }
+            if (isset($producer['reconnect_delay'])) {
+                if (!is_int($producer['reconnect_delay']) || $producer['reconnect_delay'] < 0) {
+                    throw new InvalidConfigException('Producer option `reconnect_delay` should be a non-negative integer (>= 0).');
+                }
+            }
         }
         foreach ($this->consumers as $consumer) {
             $this->validateArrayFields($consumer, self::DEFAULTS['consumers'][0]);
@@ -422,6 +431,31 @@ class Configuration extends Component
             }
             if (isset($consumer['proceed_on_exception']) && !is_bool($consumer['proceed_on_exception'])) {
                 throw new InvalidConfigException('Consumer option `proceed_on_exception` should be of type boolean.');
+            }
+            if (isset($consumer['max_reconnect_attempts'])) {
+                if (!is_int($consumer['max_reconnect_attempts']) || $consumer['max_reconnect_attempts'] < 1) {
+                    throw new InvalidConfigException('Consumer option `max_reconnect_attempts` should be a positive integer (>= 1).');
+                }
+            }
+            if (isset($consumer['reconnect_delay'])) {
+                if (!is_int($consumer['reconnect_delay']) || $consumer['reconnect_delay'] < 0) {
+                    throw new InvalidConfigException('Consumer option `reconnect_delay` should be a non-negative integer (>= 0).');
+                }
+            }
+            if (isset($consumer['systemd'])) {
+                if (!is_array($consumer['systemd'])) {
+                    throw new InvalidConfigException('Consumer option `systemd` should be of type array.');
+                }
+                if (isset($consumer['systemd']['memory_limit'])) {
+                    if (!is_int($consumer['systemd']['memory_limit']) || $consumer['systemd']['memory_limit'] < 0) {
+                        throw new InvalidConfigException('Consumer option `systemd.memory_limit` should be a non-negative integer (>= 0).');
+                    }
+                }
+                if (isset($consumer['systemd']['workers'])) {
+                    if (!is_int($consumer['systemd']['workers']) || $consumer['systemd']['workers'] < 1) {
+                        throw new InvalidConfigException('Consumer option `systemd.workers` should be a positive integer (>= 1).');
+                    }
+                }
             }
             foreach ($consumer['callbacks'] as $queue => $callback) {
                 if (!$this->isNameExist($this->queues, $queue)) {
