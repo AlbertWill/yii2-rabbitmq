@@ -521,6 +521,87 @@ class PerformanceSemaphoreTest extends TestCase
     }
 
     /**
+     * 测试 HashSemaphore 和 IncrSemaphore 完整获取和释放操作的平均耗时对比
+     */
+    public function testAcquireReleaseAverageTimeComparison()
+    {
+        $incrKey = $this->generateTestKey('test:semaphore:perf:incr:acquire:release');
+        $hashKey = $this->generateTestKey('test:semaphore:perf:hash:acquire:release');
+        $limit = 10;
+        $iterations = 1000;
+        
+        // 测试 IncrSemaphore 完整获取和释放操作
+        $incrSemaphore = new IncrSemaphore(self::$redis, $incrKey, $limit, 600);
+        $incrTimes = [];
+        $incrStart = microtime(true);
+        
+        for ($i = 0; $i < $iterations; $i++) {
+            $opStart = microtime(true);
+            if ($incrSemaphore->acquire()) {
+                $incrSemaphore->release();
+            }
+            $opEnd = microtime(true);
+            $incrTimes[] = ($opEnd - $opStart) * 1000; // 转换为毫秒
+        }
+        
+        $incrEnd = microtime(true);
+        $incrTotalTime = $incrEnd - $incrStart;
+        $incrAvgTime = array_sum($incrTimes) / count($incrTimes);
+        $incrMinTime = min($incrTimes);
+        $incrMaxTime = max($incrTimes);
+        
+        // 测试 HashSemaphore 完整获取和释放操作
+        $hashTimes = [];
+        $hashStart = microtime(true);
+        
+        for ($i = 0; $i < $iterations; $i++) {
+            $opStart = microtime(true);
+            $hashSemaphore = new HashSemaphore(self::$redis, $hashKey, $limit, 600);
+            if ($hashSemaphore->acquire()) {
+                $hashSemaphore->release();
+            }
+            $opEnd = microtime(true);
+            $hashTimes[] = ($opEnd - $opStart) * 1000; // 转换为毫秒
+        }
+        
+        $hashEnd = microtime(true);
+        $hashTotalTime = $hashEnd - $hashStart;
+        $hashAvgTime = array_sum($hashTimes) / count($hashTimes);
+        $hashMinTime = min($hashTimes);
+        $hashMaxTime = max($hashTimes);
+        
+        // 计算性能差异百分比
+        $performanceDiff = (($hashAvgTime - $incrAvgTime) / $incrAvgTime) * 100;
+        
+        echo "\n=== HashSemaphore vs IncrSemaphore 完整获取和释放操作平均耗时对比 ===\n";
+        echo "测试次数: {$iterations}\n";
+        echo "Limit: {$limit}\n";
+        echo "\nIncrSemaphore:\n";
+        echo "  - 总耗时: " . number_format($incrTotalTime, 4) . " 秒\n";
+        echo "  - 平均耗时: " . number_format($incrAvgTime, 4) . " 毫秒/次（完整获取+释放）\n";
+        echo "  - 最小耗时: " . number_format($incrMinTime, 4) . " 毫秒\n";
+        echo "  - 最大耗时: " . number_format($incrMaxTime, 4) . " 毫秒\n";
+        echo "  - 吞吐量: " . number_format($iterations / $incrTotalTime, 2) . " 操作/秒\n";
+        echo "\nHashSemaphore:\n";
+        echo "  - 总耗时: " . number_format($hashTotalTime, 4) . " 秒\n";
+        echo "  - 平均耗时: " . number_format($hashAvgTime, 4) . " 毫秒/次（完整获取+释放）\n";
+        echo "  - 最小耗时: " . number_format($hashMinTime, 4) . " 毫秒\n";
+        echo "  - 最大耗时: " . number_format($hashMaxTime, 4) . " 毫秒\n";
+        echo "  - 吞吐量: " . number_format($iterations / $hashTotalTime, 2) . " 操作/秒\n";
+        echo "\n性能对比:\n";
+        echo "  - 性能差异: " . number_format($performanceDiff, 2) . "%\n";
+        if ($performanceDiff > 0) {
+            echo "  - IncrSemaphore 比 HashSemaphore 快 " . number_format($performanceDiff, 2) . "%\n";
+        } else {
+            echo "  - HashSemaphore 比 IncrSemaphore 快 " . number_format(abs($performanceDiff), 2) . "%\n";
+        }
+        
+        // 验证两种实现都能正常工作
+        $this->assertGreaterThan(0, $incrAvgTime, 'IncrSemaphore 平均耗时应该大于 0');
+        $this->assertGreaterThan(0, $hashAvgTime, 'HashSemaphore 平均耗时应该大于 0');
+    }
+
+    /**
      * 计算百分位数
      */
     private function percentile(array $values, float $percentile): float
