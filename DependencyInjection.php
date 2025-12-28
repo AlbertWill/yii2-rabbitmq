@@ -62,22 +62,6 @@ class DependencyInjection implements BootstrapInterface
     }
 
     /**
-     * Register routing in service container
-     * @param Configuration $config
-     */
-    protected function registerRouting(Configuration $config)
-    {
-        \Yii::$container->setSingleton(Configuration::ROUTING_SERVICE_NAME, function ($container, $params) use ($config) {
-            $routing = new Routing($params['conn']);
-            \Yii::$container->invoke([$routing, 'setQueues'], [$config->queues]);
-            \Yii::$container->invoke([$routing, 'setExchanges'], [$config->exchanges]);
-            \Yii::$container->invoke([$routing, 'setBindings'], [$config->bindings]);
-
-            return $routing;
-        });
-    }
-
-    /**
      * 注册Routing容器
      * @param Configuration $config
      */
