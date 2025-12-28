@@ -72,7 +72,7 @@ fi';
     {
         $this->rabbitmq = Yii::$app->rabbitmq;
         if ($this->units_dir && !is_dir($this->units_dir)) {
-            mkdir($this->units_dir);
+            mkdir($this->units_dir, 0755, true);
         }
     }
 
