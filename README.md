@@ -33,19 +33,33 @@ Configuration
 -------------
 This extension facilitates the creation of RabbitMQ [producers and consumers](https://www.rabbitmq.com/tutorials/tutorial-three-php.html) to meet your specific needs. 
 
-**Note**: If you plan to use Semaphore feature, you need to configure Redis component first:
+**Note**: If you plan to use Semaphore feature, you need to configure both Redis component and application ID:
+
+**Required Configuration for Semaphore:**
+
+The `Yii::$app->id` is used to generate unique semaphore keys to avoid conflicts between different projects sharing the same Redis instance. Both Redis component and `Yii::$app->id` are required for Semaphore feature.
+
 ```php
-'components' => [
-    'redis' => [
-        'class' => 'yii\redis\Connection',
-        'hostname' => 'localhost',
-        'port' => 6379,
-        'database' => 0,
-        // 'password' => 'your_password',  // if needed
+// config/web.php or config/console.php
+return [
+    'id' => 'my_app_id',  // Required for Semaphore feature
+    'name' => 'My Application',
+    
+    'components' => [
+        'redis' => [
+            'class' => 'yii\redis\Connection',
+            'hostname' => 'localhost',
+            'port' => 6379,
+            'database' => 0,
+            // 'password' => 'your_password',  // if needed
+        ],
+        // ... other components ...
     ],
-    // ...
-],
+    // ... other config ...
+];
 ```
+
+**Important**: If `Yii::$app->id` is not set or empty, the Semaphore feature will throw an `InvalidConfigException`. The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to ensure uniqueness across different projects and consumers.
 
 This is an example basic config:
 ```php
@@ -360,6 +374,12 @@ Semaphore is a distributed concurrency control mechanism that uses Redis to coor
 
 **Semaphore Key Format:**
 The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to avoid conflicts between different projects and consumers.
+
+**Important**: The `{app_id}` part comes from `Yii::$app->id`, which **must be configured** in your application config. If it's not set, the Semaphore feature will throw an `InvalidConfigException`. This ensures that different applications sharing the same Redis instance don't interfere with each other's semaphore keys.
+
+Example:
+- If `Yii::$app->id = 'my-app'` and consumer name is `'import-consumer'`
+- The semaphore key will be: `rabbitmq:semaphore:my-app:import-consumer`
 
 **Lifecycle:**
 - **Acquire**: Consumer attempts to acquire a semaphore slot when it starts
