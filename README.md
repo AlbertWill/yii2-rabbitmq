@@ -2,6 +2,11 @@ RabbitMQ Extension for Yii2
 ==================
 Wrapper based on php-amqplib library to incorporate messaging in your Yii2 application via RabbitMQ. Inspired by RabbitMqBundle for Symfony framework.
 
+**Note**: This is a fork of [mikemadisonweb/yii2-rabbitmq](https://github.com/mikemadisonweb/yii2-rabbitmq) with the following enhancements:
+- **Multi-connection isolation**: Each connection independently manages its queues, exchanges, and bindings
+- **Automatic reconnection**: Consumer and Producer automatically handle connection failures and reconnect
+- **Semaphore support**: Control concurrent consumer instances in Kubernetes auto-scaling scenarios
+
 This documentation is relevant for the version 2.\*, which require PHP version >=7.0. For legacy PHP applications >=5.4 please use [previous version of this extension](https://github.com/mikemadisonweb/yii2-rabbitmq/blob/master/README_v1.md).
 
 [![Latest Stable Version](https://poser.pugx.org/mikemadisonweb/yii2-rabbitmq/v/stable)](https://packagist.org/packages/mikemadisonweb/yii2-rabbitmq)
@@ -44,7 +49,8 @@ return [
                     'password' => 'YOUR_PASSWORD',
                     'vhost' => '/',
                 ]
-                // When multiple connections is used you need to specify a `name` option for each one and define them in producer and consumer configuration blocks 
+                // When multiple connections is used you need to specify a `name` option for each one and define them in producer and consumer configuration blocks.
+                // Each connection will independently manage its queues, exchanges, and bindings.
             ],
             'exchanges' => [
                 [
@@ -242,6 +248,69 @@ Routing key as third parameter is optional, which can be the case for fanout exc
 
 By default connection to broker only get established upon publishing a message, it would not try to connect on each HTTP request if there is no need to.
 
+#### Automatic Reconnection
+Both Consumer and Producer support automatic reconnection when connection failures occur. You can configure reconnection behavior:
+
+```php
+'producers' => [
+    [
+        'name' => 'YOUR_PRODUCER_NAME',
+        'max_reconnect_attempts' => 3,  // Maximum reconnection attempts (default: 3)
+        'reconnect_delay' => 2,         // Delay between reconnection attempts in seconds (default: 2)
+    ],
+],
+'consumers' => [
+    [
+        'name' => 'YOUR_CONSUMER_NAME',
+        'callbacks' => [
+            'YOUR_QUEUE_NAME' => \path\to\YourConsumer::class,
+        ],
+        'max_reconnect_attempts' => 3,  // Maximum reconnection attempts (default: 3)
+        'reconnect_delay' => 2,         // Delay between reconnection attempts in seconds (default: 2)
+    ],
+],
+```
+
+When a connection failure is detected, the extension will automatically:
+- Close the old connection
+- Attempt to reconnect (up to `max_reconnect_attempts` times)
+- Wait `reconnect_delay` seconds between attempts
+- Retry the operation after successful reconnection
+
+For Consumers, the reconnection process preserves the semaphore (if configured) to maintain proper concurrency control.
+
+#### Semaphore Support (Kubernetes Auto-scaling)
+This extension supports semaphore-based concurrency control, which is useful in Kubernetes auto-scaling scenarios to limit the number of concurrent consumer instances.
+
+```php
+'rabbitmq' => [
+    // ... other config ...
+    'semaphore' => [
+        'type' => \mikemadisonweb\rabbitmq\components\semaphore\HashSemaphore::class,  // or IncrSemaphore::class
+        'redis_component_name' => 'redis',  // Redis component name in Yii2
+        'limit' => 10,                      // Maximum concurrent consumers (default: -1, disabled)
+        'ttl' => 300,                       // Semaphore TTL in seconds (default: 300)
+        'acquire_sleep' => 60,              // Sleep interval when acquisition fails in seconds (default: 60)
+    ],
+    'consumers' => [
+        [
+            'name' => 'YOUR_CONSUMER_NAME',
+            'callbacks' => [
+                'YOUR_QUEUE_NAME' => \path\to\YourConsumer::class,
+            ],
+            'semaphore' => [
+                'limit' => 5,  // Override global limit for this consumer
+                'ttl' => 600,  // Override global TTL for this consumer
+            ],
+        ],
+    ],
+],
+```
+
+The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to avoid conflicts between different projects.
+
+**Note**: When `limit <= 0`, semaphore control is disabled. The semaphore is acquired when the consumer starts and released when it stops.
+
 Options
 -------------
 All configuration options:
@@ -307,8 +376,8 @@ $rabbitmq_defaults = [
                 'content_type' => 'text/plain',
                 'delivery_mode' => 2,
                 'serializer' => 'serialize',
-                'max_reconnect_attempts' => 3,//重连尝试次数
-                'reconnect_delay' => 2,//重连休息秒数(秒)
+                'max_reconnect_attempts' => 3,  // Maximum reconnection attempts
+                'reconnect_delay' => 2,           // Delay between reconnection attempts (seconds)
             ],
         ],
         'consumers' => [
@@ -321,12 +390,18 @@ $rabbitmq_defaults = [
                     'prefetch_count' => 0,
                     'global' => false,
                 ],
-                 'idle_timeout' => 60,//idle超时时间
-                'idle_timeout_exit_code' => null,
+                'idle_timeout' => 60,            // Idle timeout in seconds
+                'idle_timeout_exit_code' => null, // Exit code when idle timeout occurs
                 'proceed_on_exception' => false,
-                'max_reconnect_attempts' => 3,//最大连接重试次数
-                'reconnect_delay' => 2,//重试间隔（秒）
+                'max_reconnect_attempts' => 3,     // Maximum reconnection attempts
+                'reconnect_delay' => 2,           // Delay between reconnection attempts (seconds)
                 'deserializer' => 'unserialize',
+                'semaphore' => [
+                    'type' => null,              // Semaphore type (must be a subclass of Semaphore)
+                    'limit' => null,             // Semaphore limit (must be positive integer if used)
+                    'ttl' => null,               // Semaphore TTL in seconds
+                    'acquire_sleep' => null,     // Sleep interval when acquisition fails in seconds
+                ],
             ],
         ],
         'logger' => [
@@ -334,6 +409,13 @@ $rabbitmq_defaults = [
             'category' => 'application',
             'print_console' => true,
             'system_memory' => false,
+        ],
+        'semaphore' => [
+            'type' => HashSemaphore::class,      // Default semaphore type
+            'redis_component_name' => 'redis',   // Redis component name
+            'limit' => -1,                       // Default limit (-1 means disabled)
+            'ttl' => 300,                        // Default TTL in seconds
+            'acquire_sleep' => 60,               // Default sleep interval in seconds
         ],
     ];
 ```

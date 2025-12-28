@@ -88,14 +88,36 @@ class PerformanceSemaphoreTest extends TestCase
     }
 
     /**
+     * 读取测试配置文件
+     * 优先从 tests/config.local.php 读取，如果不存在则返回空数组
+     */
+    private static function getTestConfig(): array
+    {
+        static $config = null;
+        if ($config === null) {
+            $configFile = __DIR__ . '/../../config.local.php';
+            if (file_exists($configFile)) {
+                $config = require $configFile;
+            } else {
+                $config = [];
+            }
+        }
+        return $config;
+    }
+
+    /**
      * 创建真实的 Redis 连接
+     * 优先从配置文件读取，如果没有配置文件则从环境变量读取
      */
     private static function createRealRedisConnection(): Connection
     {
-        $host = getenv('REDIS_HOST') ?: ($_ENV['REDIS_HOST'] ?? 'localhost');
-        $port = (int)(getenv('REDIS_PORT') ?: ($_ENV['REDIS_PORT'] ?? 6379));
-        $database = (int)(getenv('REDIS_DATABASE') ?: ($_ENV['REDIS_DATABASE'] ?? 0));
-        $password = getenv('REDIS_PASSWORD') ?: ($_ENV['REDIS_PASSWORD'] ?? null);
+        $testConfig = self::getTestConfig();
+        
+        // 优先从配置文件读取，如果没有则从环境变量读取，最后使用默认值
+        $host = $testConfig['redis']['host'] ?? getenv('REDIS_HOST') ?: ($_ENV['REDIS_HOST'] ?? 'localhost');
+        $port = (int)($testConfig['redis']['port'] ?? getenv('REDIS_PORT') ?: ($_ENV['REDIS_PORT'] ?? 6379));
+        $database = (int)($testConfig['redis']['database'] ?? getenv('REDIS_DATABASE') ?: ($_ENV['REDIS_DATABASE'] ?? 0));
+        $password = $testConfig['redis']['password'] ?? getenv('REDIS_PASSWORD') ?: ($_ENV['REDIS_PASSWORD'] ?? null);
         
         if ($password === '') {
             $password = null;

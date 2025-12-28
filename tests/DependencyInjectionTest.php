@@ -506,4 +506,319 @@ class DependencyInjectionTest extends TestCase
         \Yii::$app->rabbitmq->getConsumer($consumerName);
     }
 
+    /**
+     * 测试多 connection 配置隔离
+     * 验证每个 connection 的 routing 只包含自己的配置
+     * 注意：consumer 的 name 等于它 callbacks 里的 queue 名称
+     */
+    public function testMultiConnectionIsolation()
+    {
+        $conn1Name = 'connection1';
+        $conn2Name = 'connection2';
+        $queue1Name = 'queue1';
+        $queue2Name = 'queue2';
+        $exchange1Name = 'exchange1';
+        $exchange2Name = 'exchange2';
+        // consumer 的 name 必须等于 queue 的 name
+        $consumer1Name = $queue1Name;
+        $consumer2Name = $queue2Name;
+        $callbackName = 'CallbackMock';
+        
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        $this->loadExtension([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'name' => $conn1Name,
+                            'host' => 'host1',
+                        ],
+                        [
+                            'name' => $conn2Name,
+                            'host' => 'host2',
+                        ],
+                    ],
+                    'exchanges' => [
+                        [
+                            'name' => $exchange1Name,
+                            'type' => 'direct',
+                        ],
+                        [
+                            'name' => $exchange2Name,
+                            'type' => 'direct',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queue1Name,
+                        ],
+                        [
+                            'name' => $queue2Name,
+                        ],
+                    ],
+                    'bindings' => [
+                        [
+                            'queue' => $queue1Name,
+                            'exchange' => $exchange1Name,
+                            'routing_keys' => ['routing1'],
+                        ],
+                        [
+                            'queue' => $queue2Name,
+                            'exchange' => $exchange2Name,
+                            'routing_keys' => ['routing2'],
+                        ],
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumer1Name, // 等于 queue1Name
+                            'connection' => $conn1Name,
+                            'callbacks' => [
+                                $queue1Name => $callbackName,
+                            ],
+                        ],
+                        [
+                            'name' => $consumer2Name, // 等于 queue2Name
+                            'connection' => $conn2Name,
+                            'callbacks' => [
+                                $queue2Name => $callbackName,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        
+        // 获取两个 connection
+        $conn1 = \Yii::$app->rabbitmq->getConnection($conn1Name);
+        $conn2 = \Yii::$app->rabbitmq->getConnection($conn2Name);
+        
+        // 获取两个 routing
+        $routing1 = \Yii::$app->rabbitmq->getRouting($conn1);
+        $routing2 = \Yii::$app->rabbitmq->getRouting($conn2);
+        
+        // 验证 connection1 的 routing 只包含 queue1 和 exchange1
+        $queues1 = $this->getInaccessibleProperty($routing1, 'queues');
+        $exchanges1 = $this->getInaccessibleProperty($routing1, 'exchanges');
+        $bindings1 = $this->getInaccessibleProperty($routing1, 'bindings');
+        
+        $this->assertArrayHasKey($queue1Name, $queues1, 'Connection1 should have queue1');
+        $this->assertArrayNotHasKey($queue2Name, $queues1, 'Connection1 should not have queue2');
+        $this->assertArrayHasKey($exchange1Name, $exchanges1, 'Connection1 should have exchange1');
+        $this->assertArrayNotHasKey($exchange2Name, $exchanges1, 'Connection1 should not have exchange2');
+        $this->assertCount(1, $bindings1, 'Connection1 should have 1 binding');
+        $this->assertEquals($queue1Name, $bindings1[0]['queue'], 'Connection1 binding should be for queue1');
+        
+        // 验证 connection2 的 routing 只包含 queue2 和 exchange2
+        $queues2 = $this->getInaccessibleProperty($routing2, 'queues');
+        $exchanges2 = $this->getInaccessibleProperty($routing2, 'exchanges');
+        $bindings2 = $this->getInaccessibleProperty($routing2, 'bindings');
+        
+        $this->assertArrayHasKey($queue2Name, $queues2, 'Connection2 should have queue2');
+        $this->assertArrayNotHasKey($queue1Name, $queues2, 'Connection2 should not have queue1');
+        $this->assertArrayHasKey($exchange2Name, $exchanges2, 'Connection2 should have exchange2');
+        $this->assertArrayNotHasKey($exchange1Name, $exchanges2, 'Connection2 should not have exchange1');
+        $this->assertCount(1, $bindings2, 'Connection2 should have 1 binding');
+        $this->assertEquals($queue2Name, $bindings2[0]['queue'], 'Connection2 binding should be for queue2');
+    }
+
+    /**
+     * 测试 Consumer name 等于 Queue name 的场景
+     * 验证 getRoutingConfigByConnName 正确使用 consumer name 作为 queue name
+     * 注意：consumer 的 name 等于它 callbacks 里的 queue 名称，并且只有一个 queue
+     */
+    public function testConsumerNameEqualsQueueName()
+    {
+        $connName = 'test-conn';
+        $queue1Name = 'queue1';
+        $queue2Name = 'queue2'; // 这个 queue 不在该 connection 的 consumer 中
+        $exchange1Name = 'exchange1';
+        // consumer 的 name 必须等于 queue 的 name
+        $consumer1Name = $queue1Name;
+        $callbackName = 'CallbackMock';
+        
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        $this->loadExtension([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'name' => $connName,
+                            'host' => 'unreal',
+                        ],
+                    ],
+                    'exchanges' => [
+                        [
+                            'name' => $exchange1Name,
+                            'type' => 'direct',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queue1Name,
+                        ],
+                        [
+                            'name' => $queue2Name,
+                        ],
+                    ],
+                    'bindings' => [
+                        [
+                            'queue' => $queue1Name,
+                            'exchange' => $exchange1Name,
+                            'routing_keys' => ['routing1'],
+                        ],
+                        [
+                            'queue' => $queue2Name,
+                            'exchange' => $exchange1Name,
+                            'routing_keys' => ['routing2'],
+                        ],
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumer1Name, // 等于 queue1Name
+                            'connection' => $connName,
+                            'callbacks' => [
+                                $queue1Name => $callbackName,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        
+        $conn = \Yii::$app->rabbitmq->getConnection($connName);
+        $routing = \Yii::$app->rabbitmq->getRouting($conn);
+        
+        $queues = $this->getInaccessibleProperty($routing, 'queues');
+        $bindings = $this->getInaccessibleProperty($routing, 'bindings');
+        
+        // 验证只有 queue1 被包含（因为 consumer name = queue1 name）
+        $this->assertArrayHasKey($queue1Name, $queues, 'Queue1 should be included (consumer name = queue name)');
+        $this->assertArrayNotHasKey($queue2Name, $queues, 'Queue2 should not be included (not in this connection)');
+        
+        // 验证只有 queue1 的 binding 被包含
+        $this->assertCount(1, $bindings, 'Should have 1 binding');
+        $this->assertEquals($queue1Name, $bindings[0]['queue'], 'Binding should be for queue1');
+    }
+
+    /**
+     * 测试 Connection name 属性
+     * 验证 AbstractConnectionFactory::createConnection 正确设置 connection name
+     */
+    public function testConnectionNameAttribute()
+    {
+        $connName = 'test-connection';
+        
+        $this->loadExtension([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'name' => $connName,
+                            'host' => 'unreal',
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        
+        $conn = \Yii::$app->rabbitmq->getConnection($connName);
+        
+        // 验证 connection 对象有 name 属性
+        $this->assertObjectHasProperty('name', $conn, 'Connection should have name attribute');
+        $this->assertEquals($connName, $conn->name, 'Connection name should match');
+    }
+
+    /**
+     * 测试多 connection 场景下 routing 服务名称隔离
+     * 验证不同 connection 的 routing 使用不同的服务名称
+     * 注意：consumer 的 name 等于它 callbacks 里的 queue 名称
+     */
+    public function testRoutingServiceNameIsolation()
+    {
+        $conn1Name = 'conn1';
+        $conn2Name = 'conn2';
+        $queue1Name = 'queue1';
+        $queue2Name = 'queue2';
+        // consumer 的 name 必须等于 queue 的 name
+        $consumer1Name = $queue1Name;
+        $consumer2Name = $queue2Name;
+        $callbackName = 'CallbackMock';
+        
+        $callback = $this->getMockBuilder(ConsumerInterface::class)
+            ->setMockClassName($callbackName)
+            ->setMethods(['execute'])
+            ->getMock();
+        
+        $this->loadExtension([
+            'components' => [
+                'rabbitmq' => [
+                    'class' => Configuration::class,
+                    'connections' => [
+                        [
+                            'name' => $conn1Name,
+                            'host' => 'host1',
+                        ],
+                        [
+                            'name' => $conn2Name,
+                            'host' => 'host2',
+                        ],
+                    ],
+                    'queues' => [
+                        [
+                            'name' => $queue1Name,
+                        ],
+                        [
+                            'name' => $queue2Name,
+                        ],
+                    ],
+                    'consumers' => [
+                        [
+                            'name' => $consumer1Name, // 等于 queue1Name
+                            'connection' => $conn1Name,
+                            'callbacks' => [
+                                $queue1Name => $callbackName,
+                            ],
+                        ],
+                        [
+                            'name' => $consumer2Name, // 等于 queue2Name
+                            'connection' => $conn2Name,
+                            'callbacks' => [
+                                $queue2Name => $callbackName,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        
+        $conn1 = \Yii::$app->rabbitmq->getConnection($conn1Name);
+        $conn2 = \Yii::$app->rabbitmq->getConnection($conn2Name);
+        
+        // 验证两个 routing 是不同的实例
+        $routing1 = \Yii::$app->rabbitmq->getRouting($conn1);
+        $routing2 = \Yii::$app->rabbitmq->getRouting($conn2);
+        
+        $this->assertNotSame($routing1, $routing2, 'Routings should be different instances');
+        
+        // 验证它们包含不同的配置
+        $queues1 = $this->getInaccessibleProperty($routing1, 'queues');
+        $queues2 = $this->getInaccessibleProperty($routing2, 'queues');
+        
+        $this->assertArrayHasKey($queue1Name, $queues1, 'Routing1 should have queue1');
+        $this->assertArrayNotHasKey($queue2Name, $queues1, 'Routing1 should not have queue2');
+        $this->assertArrayHasKey($queue2Name, $queues2, 'Routing2 should have queue2');
+        $this->assertArrayNotHasKey($queue1Name, $queues2, 'Routing2 should not have queue1');
+    }
+
 }

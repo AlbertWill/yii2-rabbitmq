@@ -19,14 +19,17 @@ use yii\redis\Connection as RedisConnection;
  * 使用真实的 RabbitMQ 和 Redis 连接测试完整的消息发送和接收流程
  * 
  * 配置说明：
- * 1. RabbitMQ 环境变量：
+ * 1. 优先从配置文件读取（推荐）：
+ *    - 复制 tests/config.local.php.example 为 tests/config.local.php
+ *    - 编辑 tests/config.local.php，填入实际的 RabbitMQ 和 Redis 连接信息
+ *    - config.local.php 会被 .gitignore 忽略，不会提交到版本库
+ * 
+ * 2. 环境变量方式（备选）：
  *    - RABBITMQ_HOST: RabbitMQ 主机地址（默认: localhost）
  *    - RABBITMQ_PORT: RabbitMQ 端口（默认: 5672）
  *    - RABBITMQ_USER: RabbitMQ 用户名（默认: guest）
  *    - RABBITMQ_PASSWORD: RabbitMQ 密码（默认: guest）
  *    - RABBITMQ_VHOST: RabbitMQ 虚拟主机（默认: /）
- * 
- * 2. Redis 环境变量（用于 semaphore）：
  *    - REDIS_HOST: Redis 主机地址（默认: localhost）
  *    - REDIS_PORT: Redis 端口（默认: 6379）
  *    - REDIS_DATABASE: Redis 数据库（默认: 0）
@@ -35,7 +38,7 @@ use yii\redis\Connection as RedisConnection;
  * 3. 如果 RabbitMQ 或 Redis 不可用，测试会自动跳过
  * 
  * 运行方式：
- * RABBITMQ_HOST=localhost RABBITMQ_PORT=5672 REDIS_HOST=localhost REDIS_PORT=6379 php phpunit.phar tests/components/IntegrationRabbitMQTest.php
+ * php vendor/bin/phpunit tests/components/IntegrationRabbitMQTest.php
  */
 class IntegrationRabbitMQTest extends TestCase
 {
@@ -188,15 +191,37 @@ class IntegrationRabbitMQTest extends TestCase
     }
 
     /**
+     * 读取测试配置文件
+     * 优先从 tests/config.local.php 读取，如果不存在则返回空数组
+     */
+    private static function getTestConfig(): array
+    {
+        static $config = null;
+        if ($config === null) {
+            $configFile = __DIR__ . '/../config.local.php';
+            if (file_exists($configFile)) {
+                $config = require $configFile;
+            } else {
+                $config = [];
+            }
+        }
+        return $config;
+    }
+
+    /**
      * 创建真实的 RabbitMQ 连接
+     * 优先从配置文件读取，如果没有配置文件则从环境变量读取
      */
     private static function createRealRabbitMQConnection(): AMQPLazyConnection
     {
-        $host = getenv('RABBITMQ_HOST') ?: ($_ENV['RABBITMQ_HOST'] ?? 'localhost');
-        $port = (int)(getenv('RABBITMQ_PORT') ?: ($_ENV['RABBITMQ_PORT'] ?? 5672));
-        $user = getenv('RABBITMQ_USER') ?: ($_ENV['RABBITMQ_USER'] ?? 'guest');
-        $password = getenv('RABBITMQ_PASSWORD') ?: ($_ENV['RABBITMQ_PASSWORD'] ?? 'guest');
-        $vhost = getenv('RABBITMQ_VHOST') ?: ($_ENV['RABBITMQ_VHOST'] ?? '/');
+        $testConfig = self::getTestConfig();
+        
+        // 优先从配置文件读取，如果没有则从环境变量读取，最后使用默认值
+        $host = $testConfig['rabbitmq']['host'] ?? getenv('RABBITMQ_HOST') ?: ($_ENV['RABBITMQ_HOST'] ?? 'localhost');
+        $port = (int)($testConfig['rabbitmq']['port'] ?? getenv('RABBITMQ_PORT') ?: ($_ENV['RABBITMQ_PORT'] ?? 5672));
+        $user = $testConfig['rabbitmq']['user'] ?? getenv('RABBITMQ_USER') ?: ($_ENV['RABBITMQ_USER'] ?? 'guest');
+        $password = $testConfig['rabbitmq']['password'] ?? getenv('RABBITMQ_PASSWORD') ?: ($_ENV['RABBITMQ_PASSWORD'] ?? 'guest');
+        $vhost = $testConfig['rabbitmq']['vhost'] ?? getenv('RABBITMQ_VHOST') ?: ($_ENV['RABBITMQ_VHOST'] ?? '/');
 
         return new AMQPLazyConnection(
             $host,
@@ -218,13 +243,17 @@ class IntegrationRabbitMQTest extends TestCase
 
     /**
      * 创建真实的 Redis 连接
+     * 优先从配置文件读取，如果没有配置文件则从环境变量读取
      */
     private static function createRealRedisConnection(): RedisConnection
     {
-        $host = getenv('REDIS_HOST') ?: ($_ENV['REDIS_HOST'] ?? 'localhost');
-        $port = (int)(getenv('REDIS_PORT') ?: ($_ENV['REDIS_PORT'] ?? 6379));
-        $database = (int)(getenv('REDIS_DATABASE') ?: ($_ENV['REDIS_DATABASE'] ?? 0));
-        $password = getenv('REDIS_PASSWORD') ?: ($_ENV['REDIS_PASSWORD'] ?? null);
+        $testConfig = self::getTestConfig();
+        
+        // 优先从配置文件读取，如果没有则从环境变量读取，最后使用默认值
+        $host = $testConfig['redis']['host'] ?? getenv('REDIS_HOST') ?: ($_ENV['REDIS_HOST'] ?? 'localhost');
+        $port = (int)($testConfig['redis']['port'] ?? getenv('REDIS_PORT') ?: ($_ENV['REDIS_PORT'] ?? 6379));
+        $database = (int)($testConfig['redis']['database'] ?? getenv('REDIS_DATABASE') ?: ($_ENV['REDIS_DATABASE'] ?? 0));
+        $password = $testConfig['redis']['password'] ?? getenv('REDIS_PASSWORD') ?: ($_ENV['REDIS_PASSWORD'] ?? null);
 
         if ($password === '') {
             $password = null;

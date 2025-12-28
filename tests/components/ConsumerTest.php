@@ -659,4 +659,377 @@ class ConsumerTest extends TestCase
             throw $e;
         }
     }
+
+    /**
+     * 测试连接断开重连 - 验证异常处理和重连逻辑
+     * 由于重连逻辑复杂，这里主要测试 waitForMessage 方法对连接异常的处理
+     */
+    public function testConnectionClosedReconnect()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel', 'reconnect', 'isConnected', 'close'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait', 'close', 'getChannelId', 'basic_consume', 'basic_qos'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        $connection->method('isConnected')
+            ->willReturn(true);
+        // reconnect 可能内部调用 disableHeartbeat，我们让它返回自身以支持链式调用
+        $connection->method('reconnect')
+            ->willReturnSelf();
+        $connection->method('close')
+            ->willReturn(null);
+        
+        $channel->method('getChannelId')
+            ->willReturn(1);
+        $channel->method('close')
+            ->willReturn(null);
+        $channel->method('basic_consume')
+            ->willReturn(null);
+        $channel->method('basic_qos')
+            ->willReturn(null);
+        
+        $routing = $this->createMock(Routing::class);
+        $routing->expects($this->atLeastOnce())
+            ->method('declareAll');
+        
+        $logger = $this->createMock(Logger::class);
+        $logger->expects($this->atLeastOnce())
+            ->method('logDebug');
+        
+        $consumer = new Consumer($connection, $routing, $logger, true, null);
+        $consumer->setQueues(['queue' => 'callback']);
+        $consumer->setMaxReconnectAttempts(3);
+        $consumer->setReconnectDelay(0);
+        
+        // wait 抛出连接异常，重连成功后直接返回（不会再次调用 wait）
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new \PhpAmqpLib\Exception\AMQPConnectionClosedException('Connection closed'));
+        
+        // 测试 waitForMessage 方法处理连接异常
+        // 重连成功后，needContinue 应该是 true，表示需要继续循环（在下一次循环中再次调用 wait）
+        $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+        $this->assertTrue($result['needContinue'], 'Should continue loop after reconnection (will call wait again in next iteration)');
+        $this->assertNull($result['exitCode'], 'Exit code should be null');
+    }
+
+    /**
+     * 测试通道异常处理
+     * 模拟 AMQPChannelClosedException 异常，验证通道重建逻辑
+     */
+    public function testChannelClosedException()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait', 'close', 'getChannelId', 'basic_consume', 'basic_qos'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        
+        $channel->method('getChannelId')
+            ->willReturn(1);
+        $channel->method('basic_consume')
+            ->willReturn(null);
+        $channel->method('basic_qos')
+            ->willReturn(null);
+        
+        $routing = $this->createMock(Routing::class);
+        // 通道异常时，setup() 会被调用一次（重建通道时）
+        $routing->expects($this->once())
+            ->method('declareAll');
+        
+        $logger = $this->createMock(Logger::class);
+        $logger->expects($this->atLeastOnce())
+            ->method('logDebug');
+        
+        $consumer = new Consumer($connection, $routing, $logger, true, null);
+        $consumer->setQueues(['queue' => 'callback']);
+        
+        // wait 抛出通道异常，通道重建成功后直接返回（不会再次调用 wait）
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new \PhpAmqpLib\Exception\AMQPChannelClosedException('Channel closed'));
+        
+        $channel->expects($this->once())
+            ->method('close');
+        
+        $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+        $this->assertTrue($result['needContinue'], 'Should continue loop after channel rebuild (will call wait again in next iteration)');
+    }
+
+    /**
+     * 测试重连失败场景
+     * 模拟重连多次失败，验证抛出正确的异常
+     */
+    public function testReconnectFailure()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel', 'reconnect', 'isConnected', 'close'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait', 'close', 'getChannelId', 'basic_consume', 'basic_qos'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        $connection->method('isConnected')
+            ->willReturn(true);
+        $connection->method('reconnect')
+            ->willThrowException(new \Exception('Reconnect failed'));
+        $connection->method('close')
+            ->willReturn(null);
+        
+        $channel->method('getChannelId')
+            ->willReturn(1);
+        $channel->method('close')
+            ->willReturn(null);
+        $channel->method('basic_consume')
+            ->willReturn(null);
+        $channel->method('basic_qos')
+            ->willReturn(null);
+        
+        $routing = $this->createMock(Routing::class);
+        $logger = $this->createMock(Logger::class);
+        
+        $consumer = new Consumer($connection, $routing, $logger, true, null);
+        $consumer->setQueues(['queue' => 'callback']);
+        $consumer->setMaxReconnectAttempts(2);
+        $consumer->setReconnectDelay(0);
+        
+        // wait 抛出连接异常
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new \PhpAmqpLib\Exception\AMQPConnectionClosedException('Connection closed'));
+        
+        $this->expectException(\PhpAmqpLib\Exception\AMQPIOException::class);
+        $this->expectExceptionMessage('MQ连接重试失败');
+        
+        $this->invokeMethod($consumer, 'waitForMessage', []);
+    }
+
+    /**
+     * 测试 idle timeout 处理
+     * 验证 waitForMessage 正确处理超时
+     */
+    public function testIdleTimeoutHandling()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        
+        $routing = $this->createMock(Routing::class);
+        $logger = $this->createMock(Logger::class);
+        
+        $consumer = new Consumer($connection, $routing, $logger, false, null);
+        $consumer->setIdleTimeout(1);
+        $consumer->setIdleTimeoutExitCode(100);
+        
+        // wait 抛出超时异常
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new AMQPTimeoutException('Idle timeout'));
+        
+        $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+        
+        $this->assertFalse($result['needContinue'], 'Should not continue when exit code is set');
+        $this->assertEquals(100, $result['exitCode'], 'Should return configured exit code');
+    }
+
+    /**
+     * 测试 idle timeout 无退出码
+     * 验证当没有设置 idleTimeoutExitCode 时，超时后继续循环
+     */
+    public function testIdleTimeoutWithoutExitCode()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        
+        $routing = $this->createMock(Routing::class);
+        $logger = $this->createMock(Logger::class);
+        
+        $consumer = new Consumer($connection, $routing, $logger, false, null);
+        $consumer->setIdleTimeout(1);
+        $consumer->setIdleTimeoutExitCode(null);
+        
+        // wait 抛出超时异常
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new AMQPTimeoutException('Idle timeout'));
+        
+        $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+        
+        $this->assertTrue($result['needContinue'], 'Should continue when no exit code is set');
+        $this->assertNull($result['exitCode'], 'Exit code should be null');
+    }
+
+    /**
+     * 测试重连时信号量保持
+     * 验证重连过程中信号量不被释放
+     */
+    public function testSemaphorePreservedDuringReconnect()
+    {
+        $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['channel', 'reconnect', 'isConnected', 'close'])
+            ->getMock();
+        
+        $channel = $this->getMockBuilder(AMQPChannel::class)
+            ->disableOriginalConstructor()
+            ->setMethods(['wait', 'close', 'getChannelId', 'basic_consume', 'basic_qos'])
+            ->getMock();
+        
+        $connection->method('channel')
+            ->willReturn($channel);
+        $connection->method('isConnected')
+            ->willReturn(true);
+        $connection->method('reconnect')
+            ->willReturnSelf();
+        $connection->method('close')
+            ->willReturn(null);
+        
+        $channel->method('getChannelId')
+            ->willReturn(1);
+        $channel->method('close')
+            ->willReturn(null);
+        $channel->method('basic_consume')
+            ->willReturn(null);
+        $channel->method('basic_qos')
+            ->willReturn(null);
+        
+        $routing = $this->createMock(Routing::class);
+        $logger = $this->createMock(Logger::class);
+        
+        $semaphore = $this->createMock(Semaphore::class);
+        // acquire_wait 在 consume() 方法中调用，不在 waitForMessage 中
+        $semaphore->expects($this->never())
+            ->method('acquire_wait');
+        // 重连时不应该释放信号量
+        $semaphore->expects($this->never())
+            ->method('release');
+        // 重连成功后应该刷新心跳
+        $semaphore->expects($this->once())
+            ->method('heartbeat');
+        
+        $consumer = new Consumer($connection, $routing, $logger, true, $semaphore);
+        $consumer->setQueues(['queue' => 'callback']);
+        $consumer->setMaxReconnectAttempts(3);
+        $consumer->setReconnectDelay(0);
+        
+        // 先获取信号量（模拟已获取状态）
+        $this->setInaccessibleProperty($consumer, 'semaphoreAcquired', true);
+        
+        // wait 抛出连接异常，重连成功后直接返回（不会再次调用 wait）
+        $channel->expects($this->once())
+            ->method('wait')
+            ->willThrowException(new \PhpAmqpLib\Exception\AMQPConnectionClosedException('Connection closed'));
+        
+        // 模拟 setup 方法（重连后会调用一次）
+        $routing->expects($this->once())
+            ->method('declareAll');
+        
+        $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+        $this->assertTrue($result['needContinue'], 'Should continue loop after reconnection (will call wait again in next iteration)');
+        
+        // 验证信号量仍然被持有
+        $this->assertTrue($this->getInaccessibleProperty($consumer, 'semaphoreAcquired'), 'Semaphore should still be acquired');
+    }
+
+    /**
+     * 测试多种连接异常类型
+     * 验证不同类型的连接异常都能触发重连
+     */
+    public function testVariousConnectionExceptions()
+    {
+        $exceptions = [
+            new \PhpAmqpLib\Exception\AMQPConnectionClosedException('Connection closed'),
+            new \PhpAmqpLib\Exception\AMQPDataReadException('Data read error'),
+            new \PhpAmqpLib\Exception\AMQPIOException('IO error'),
+            new \PhpAmqpLib\Exception\AMQPBasicCancelException('Basic cancel'),
+        ];
+        
+        foreach ($exceptions as $exception) {
+            $connection = $this->getMockBuilder(AMQPLazyConnection::class)
+                ->disableOriginalConstructor()
+                ->setMethods(['channel', 'reconnect', 'isConnected', 'close'])
+                ->getMock();
+            
+            $channel = $this->getMockBuilder(AMQPChannel::class)
+                ->disableOriginalConstructor()
+                ->setMethods(['wait', 'close', 'getChannelId', 'basic_consume', 'basic_qos'])
+                ->getMock();
+            
+            $connection->method('channel')
+                ->willReturn($channel);
+            $connection->method('isConnected')
+                ->willReturn(true);
+            $connection->method('reconnect')
+                ->willReturnSelf();
+            $connection->method('close')
+                ->willReturn(null);
+            
+            $channel->method('getChannelId')
+                ->willReturn(1);
+            $channel->method('close')
+                ->willReturn(null);
+            $channel->method('basic_consume')
+                ->willReturn(null);
+            $channel->method('basic_qos')
+                ->willReturn(null);
+            
+            $routing = $this->createMock(Routing::class);
+            $logger = $this->createMock(Logger::class);
+            
+            $consumer = new Consumer($connection, $routing, $logger, true, null);
+            $consumer->setQueues(['queue' => 'callback']);
+            $consumer->setMaxReconnectAttempts(3);
+            $consumer->setReconnectDelay(0);
+            
+            // wait 抛出异常，重连成功后直接返回（不会再次调用 wait）
+            $channel->expects($this->once())
+                ->method('wait')
+                ->willThrowException($exception);
+            
+            // 重连后会调用 setup，setup 会调用 declareAll
+            $routing->expects($this->once())
+                ->method('declareAll');
+            
+            $result = $this->invokeMethod($consumer, 'waitForMessage', []);
+            $this->assertTrue($result['needContinue'], 'Should continue loop after handling ' . get_class($exception) . ' (will call wait again in next iteration)');
+        }
+    }
 }
