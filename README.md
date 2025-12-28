@@ -31,7 +31,23 @@ to the require section of your `composer.json` file.
 
 Configuration
 -------------
-This extension facilitates the creation of RabbitMQ [producers and consumers](https://www.rabbitmq.com/tutorials/tutorial-three-php.html) to meet your specific needs. This is an example basic config:
+This extension facilitates the creation of RabbitMQ [producers and consumers](https://www.rabbitmq.com/tutorials/tutorial-three-php.html) to meet your specific needs. 
+
+**Note**: If you plan to use Semaphore feature, you need to configure Redis component first:
+```php
+'components' => [
+    'redis' => [
+        'class' => 'yii\redis\Connection',
+        'hostname' => 'localhost',
+        'port' => 6379,
+        'database' => 0,
+        // 'password' => 'your_password',  // if needed
+    ],
+    // ...
+],
+```
+
+This is an example basic config:
 ```php
 <?php
 return [
@@ -282,6 +298,17 @@ For Consumers, the reconnection process preserves the semaphore (if configured) 
 #### Semaphore Support (Kubernetes Auto-scaling)
 This extension supports semaphore-based concurrency control, which is useful in Kubernetes auto-scaling scenarios to limit the number of concurrent consumer instances.
 
+**What is Semaphore?**
+Semaphore is a distributed concurrency control mechanism that uses Redis to coordinate multiple consumer processes. It ensures that no more than a specified number of consumer instances are running simultaneously, which is crucial in containerized environments like Kubernetes where auto-scaling can create multiple pod instances.
+
+**How it works:**
+1. When a consumer starts, it attempts to acquire a semaphore slot from Redis
+2. If the limit is reached, the consumer waits (based on `acquire_sleep` configuration)
+3. Once acquired, the consumer runs and periodically sends heartbeats to refresh the TTL
+4. When the consumer stops (normally or due to error), it releases the semaphore slot
+5. Other waiting consumers can then acquire the released slot
+
+**Configuration Example:**
 ```php
 'rabbitmq' => [
     // ... other config ...
@@ -307,9 +334,49 @@ This extension supports semaphore-based concurrency control, which is useful in 
 ],
 ```
 
-The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to avoid conflicts between different projects.
+**Semaphore Types:**
 
-**Note**: When `limit <= 0`, semaphore control is disabled. The semaphore is acquired when the consumer starts and released when it stops.
+1. **HashSemaphore** (Recommended for most cases)
+   - Uses Redis Set to track unique tokens for each consumer instance
+   - Each consumer gets a unique token, allowing better tracking and debugging
+   - Better for scenarios where you need to identify which specific instances are running
+   - Slightly more Redis memory usage but provides better observability
+
+2. **IncrSemaphore** (Better performance)
+   - Uses Redis INCR/DECR to maintain a simple counter
+   - Lower memory footprint and slightly better performance
+   - Suitable for high-throughput scenarios where instance tracking is not needed
+   - Simpler implementation, less Redis operations
+
+**Configuration Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `type` | string | `HashSemaphore::class` | Semaphore implementation class (`HashSemaphore::class` or `IncrSemaphore::class`) |
+| `redis_component_name` | string | `'redis'` | Name of the Redis component in Yii2 application |
+| `limit` | int | `-1` | Maximum concurrent consumer instances. When `<= 0`, semaphore is disabled |
+| `ttl` | int | `300` | Time-to-live in seconds. Semaphore key expires after this time if no heartbeat |
+| `acquire_sleep` | int | `60` | Sleep interval (seconds) when semaphore acquisition fails. Set to `0` to fail immediately |
+
+**Semaphore Key Format:**
+The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to avoid conflicts between different projects and consumers.
+
+**Lifecycle:**
+- **Acquire**: Consumer attempts to acquire a semaphore slot when it starts
+- **Heartbeat**: Consumer periodically sends heartbeats to refresh the TTL (prevents expiration due to long-running processes)
+- **Release**: Consumer releases the semaphore slot when it stops (normal exit or error)
+
+**Important Notes:**
+- When `limit <= 0`, semaphore control is disabled
+- The semaphore is automatically acquired when the consumer starts and released when it stops
+- During reconnection, the semaphore state is preserved to maintain proper concurrency control
+- If a consumer crashes without releasing the semaphore, it will expire after `ttl` seconds
+- Set `acquire_sleep` to `0` if you want consumers to exit immediately when the limit is reached, rather than waiting
+
+**Use Cases:**
+- **Kubernetes Auto-scaling**: Limit concurrent consumer pods to prevent resource exhaustion
+- **Resource Management**: Control database connections or API rate limits
+- **Cost Optimization**: Limit concurrent processing to stay within cloud service quotas
 
 Options
 -------------
