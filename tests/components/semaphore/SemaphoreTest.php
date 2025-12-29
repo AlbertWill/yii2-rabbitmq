@@ -2,6 +2,7 @@
 
 namespace mikemadisonweb\rabbitmq\tests\components\semaphore;
 
+use mikemadisonweb\rabbitmq\components\Logger;
 use mikemadisonweb\rabbitmq\components\semaphore\Semaphore;
 use mikemadisonweb\rabbitmq\tests\TestCase;
 use yii\redis\Connection;
@@ -12,12 +13,17 @@ class SemaphoreTest extends TestCase
     /**
      * 创建一个用于测试的 Semaphore 实现
      */
-    private function createTestSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 0): Semaphore
+    private function createTestSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 0, Logger $logger = null): Semaphore
     {
+        // 如果没有提供 Logger，使用静默 Logger
+        if ($logger === null) {
+            $logger = $this->createSilentLogger();
+        }
+        
         // 使用 getMockForAbstractClass 创建抽象类的实例
         $semaphore = $this->getMockForAbstractClass(
             Semaphore::class,
-            [$redis, $key, $limit, $ttl, $acquireSleep]
+            [$redis, $key, $limit, $logger, $ttl, $acquireSleep]
         );
 
         // Mock 抽象方法
@@ -198,9 +204,10 @@ class SemaphoreTest extends TestCase
     public function testAcquireWaitWithSleep()
     {
         $redis = $this->createMock(Connection::class);
+        $logger = $this->createSilentLogger();
         $semaphore = $this->getMockForAbstractClass(
             Semaphore::class,
-            [$redis, 'test:key', 10, 600, 1] // acquireSleep = 1，会循环重试
+            [$redis, 'test:key', 10, $logger, 600, 1] // acquireSleep = 1，会循环重试
         );
 
         // 第一次失败，第二次成功
@@ -308,9 +315,10 @@ class SemaphoreTest extends TestCase
             );
 
         // 创建一个带有 retryInterval 的 semaphore
+        $logger = $this->createSilentLogger();
         $semaphore = $this->getMockForAbstractClass(
             Semaphore::class,
-            [$redis, 'test:key', 10, 600, 0]
+            [$redis, 'test:key', 10, $logger, 600, 0]
         );
         $semaphore->expects($this->any())
             ->method('acquire')

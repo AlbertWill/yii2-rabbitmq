@@ -36,6 +36,16 @@ class ConcurrentSemaphoreTest extends TestCase
         return $redis;
     }
 
+    private function createIncrSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): IncrSemaphore
+    {
+        return new IncrSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
+    private function createHashSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): HashSemaphore
+    {
+        return new HashSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
     /**
      * 测试多个 IncrSemaphore 实例同时获取（模拟并发场景）
      * 
@@ -64,7 +74,7 @@ class ConcurrentSemaphoreTest extends TestCase
         
         // 创建多个 semaphore 实例（模拟多个消费者同时获取）
         for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphores[] = new IncrSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores[] = $this->createIncrSemaphore($redis, 'test:key', $limit, 600);
         }
         
         // 顺序执行 acquire（在实际并发场景中，这些操作会同时发生）
@@ -115,7 +125,7 @@ class ConcurrentSemaphoreTest extends TestCase
         
         // 创建多个 semaphore 实例（每个实例有唯一的 token）
         for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphores[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores[] = $this->createHashSemaphore($redis, 'test:key', $limit, 600);
         }
         
         // 顺序执行 acquire（在实际并发场景中，这些操作会同时发生）
@@ -165,7 +175,7 @@ class ConcurrentSemaphoreTest extends TestCase
 
         $semaphores = [];
         for ($i = 0; $i < $totalInstances; $i++) {
-            $semaphores[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores[] = $this->createHashSemaphore($redis, 'test:key', $limit, 600);
         }
         
         // 前 3 个获取成功
@@ -209,7 +219,7 @@ class ConcurrentSemaphoreTest extends TestCase
         // 第一轮：获取
         $semaphores1 = [];
         for ($i = 0; $i < $acquiredCount; $i++) {
-            $semaphores1[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores1[] = $this->createHashSemaphore($redis, 'test:key', $limit, 600);
             $result = $semaphores1[$i]->acquire();
             $this->assertTrue($result, "第 " . ($i + 1) . " 个实例应该成功获取");
         }
@@ -222,7 +232,7 @@ class ConcurrentSemaphoreTest extends TestCase
         // 第二轮：重新获取
         $semaphores2 = [];
         for ($i = 0; $i < $acquiredCount; $i++) {
-            $semaphores2[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores2[] = $this->createHashSemaphore($redis, 'test:key', $limit, 600);
             $result = $semaphores2[$i]->acquire();
             $this->assertTrue($result, "释放后，第 " . ($i + 1) . " 个新实例应该可以获取");
         }

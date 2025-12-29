@@ -305,9 +305,8 @@ class Consumer extends BaseRabbitMQ
                     continue;
                 }
 
-                if (!AMQP_WITHOUT_SIGNALS && extension_loaded('pcntl')) {
-                    pcntl_signal_dispatch();
-                }
+                // 处理挂起的信号
+                $this->dispatchSignals();
 
             }
         } finally {
@@ -407,16 +406,7 @@ class Consumer extends BaseRabbitMQ
      */
     protected function maybeStopConsumer(): bool
     {
-        if (extension_loaded('pcntl') && (defined('AMQP_WITHOUT_SIGNALS') ? !AMQP_WITHOUT_SIGNALS : true))
-        {
-            if (!function_exists('pcntl_signal_dispatch'))
-            {
-                throw new BadFunctionCallException(
-                    "Function 'pcntl_signal_dispatch' is referenced in the php.ini 'disable_functions' and can't be called."
-                );
-            }
-            pcntl_signal_dispatch();
-        }
+        $this->dispatchSignals();
         if ($this->forceStop || ($this->consumed === $this->target && $this->target > 0))
         {
             $this->stopConsuming();
@@ -578,7 +568,7 @@ class Consumer extends BaseRabbitMQ
      * mq连接断开异常处理
      * 注意：重连时信号量保持不变（信号量基于 Redis，不依赖于 RabbitMQ 连接）
      * 如果重连时间较长，信号量可能会过期，但 wait() 超时后会调用 heartbeat() 刷新 TTL
-     * 
+     *
      * @param $e
      * @throws AMQPIOException
      */
@@ -611,7 +601,7 @@ class Consumer extends BaseRabbitMQ
     /**
      * mq通道异常处理
      * 注意：通道重建时信号量保持不变（信号量基于 Redis，不依赖于 RabbitMQ 通道）
-     * 
+     *
      * @param $e
      */
     private function channelClosedException($e): void
@@ -700,19 +690,28 @@ class Consumer extends BaseRabbitMQ
             return;
         }
 
-        try {
-            $this->semaphore->acquire_wait();
+        // 尝试获取信号量
+        if ($this->semaphore->acquire_wait()) {
             $this->semaphoreAcquired = true;
-        } catch (\Exception $e) {
-            // 获取失败时确保状态一致
-            $this->semaphoreAcquired = false;
-            // 抛出更详细的异常信息，包含消费者名称和信号量配置信息
-            throw new RuntimeException(
-                "Failed to acquire semaphore for consumer '{$this->name}': " . $e->getMessage(),
-                $e->getCode(),
-                $e
-            );
+            return;
         }
+
+        // 获取失败或被信号中断
+        $this->semaphoreAcquired = false;
+
+        // 处理挂起的信号，确保信号处理器能够执行
+        $this->dispatchSignals();
+
+        // 如果 forceStop 为 true，说明是被信号中断，信号处理器已执行（stopDaemon），优雅退出
+        if ($this->forceStop) {
+            $this->logger->logDebug("信号量获取被信号中断，forceStop=true，优雅退出");
+            return;
+        }
+
+        // 正常的获取失败（达到 limit），抛出异常
+        throw new RuntimeException(
+            "Failed to acquire semaphore for consumer '{$this->name}': Semaphore limit reached"
+        );
     }
 
     /**
@@ -748,6 +747,25 @@ class Consumer extends BaseRabbitMQ
             $this->semaphore->heartbeat();
         } catch (\Exception $e) {
             // 心跳失败不影响主流程，继续执行
+        }
+    }
+
+    /**
+     * 处理挂起的信号
+     *
+     * @throws BadFunctionCallException 当 pcntl_signal_dispatch 函数不可用时抛出
+     */
+    private function dispatchSignals(): void
+    {
+        if (extension_loaded('pcntl') && (defined('AMQP_WITHOUT_SIGNALS') ? !AMQP_WITHOUT_SIGNALS : true))
+        {
+            if (!function_exists('pcntl_signal_dispatch'))
+            {
+                throw new BadFunctionCallException(
+                    "Function 'pcntl_signal_dispatch' is referenced in the php.ini 'disable_functions' and can't be called."
+                );
+            }
+            pcntl_signal_dispatch();
         }
     }
 }

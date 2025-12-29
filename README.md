@@ -393,6 +393,65 @@ Example:
 - If a consumer crashes without releasing the semaphore, it will expire after `ttl` seconds
 - Set `acquire_sleep` to `0` if you want consumers to exit immediately when the limit is reached, rather than waiting
 
+**Recommended Configuration Strategy for `acquire_sleep`:**
+
+The `acquire_sleep` parameter controls how long a consumer waits before retrying when it fails to acquire a semaphore. Proper configuration is crucial to balance Redis load and consumer responsiveness.
+
+**Performance Considerations:**
+- Based on performance tests, Redis can handle approximately **1000-1100 semaphore operations per second**
+- Each `acquire()` operation takes about **0.9-1.0 milliseconds**
+- The system automatically adds **±20% random jitter** to `acquire_sleep` to prevent thundering herd problems
+
+**Calculation Formula:**
+```
+Minimum acquire_sleep = (Total Workers - Limit) / Redis Capacity
+Recommended acquire_sleep = Minimum × 1.5 to 2.0 (safety margin)
+```
+
+Where:
+- **Total Workers**: Estimated total number of consumer processes
+- **Limit**: Semaphore limit configured
+- **Redis Capacity**: ~1000 operations/second (conservative estimate)
+
+**Configuration Recommendations by Scale:**
+
+| Total Workers | Limit | Recommended `acquire_sleep` | Notes |
+|---------------|-------|----------------------------|-------|
+| < 1,000 | Any | 5-10 seconds | Small scale, low Redis load |
+| 1,000 - 5,000 | < 500 | 10-20 seconds | Medium scale |
+| 5,000 - 10,000 | < 1,000 | 15-30 seconds | Large scale, need to control retry frequency |
+| > 10,000 | < 2,000 | 20-60 seconds | Very large scale, must strictly control |
+
+**Example Scenarios:**
+
+1. **10,000 workers, limit = 100:**
+   - Waiting workers: 9,900
+   - Minimum: 9,900 / 1000 ≈ 10 seconds
+   - **Recommended: 15-30 seconds**
+   - With ±20% jitter: actual wait time ranges from 12-36 seconds (for 15s) or 24-72 seconds (for 30s)
+
+2. **10,000 workers, limit = 1,000:**
+   - Waiting workers: 9,000
+   - Minimum: 9,000 / 1000 = 9 seconds
+   - **Recommended: 10-20 seconds**
+
+3. **10,000 workers, limit = 5,000:**
+   - Waiting workers: 5,000
+   - Minimum: 5,000 / 1000 = 5 seconds
+   - **Recommended: 5-15 seconds**
+
+**Best Practices:**
+- **Monitor Redis QPS**: Adjust `acquire_sleep` based on actual Redis load monitoring
+- **Consider Heartbeat Operations**: Remember that heartbeat operations also consume Redis capacity
+- **Network Latency**: If Redis is in a remote network, consider increasing `acquire_sleep` slightly
+- **Dynamic Adjustment**: Adjust based on actual runtime conditions rather than fixed values
+- **Random Jitter**: The system automatically adds ±20% random jitter to spread retry requests and reduce Redis pressure spikes
+
+**Special Cases:**
+- **Fast Response Required**: Use smaller values (5-10 seconds) but ensure Redis load is acceptable
+- **Resource Constrained**: If Redis performance is limited or network latency is high, use larger values (30-60 seconds)
+- **Test Environment**: Can use smaller values (1-5 seconds) for faster testing
+
 **Use Cases:**
 - **Kubernetes Auto-scaling**: Limit concurrent consumer pods to prevent resource exhaustion
 - **Resource Management**: Control database connections or API rate limits

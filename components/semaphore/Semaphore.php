@@ -2,6 +2,7 @@
 
 namespace mikemadisonweb\rabbitmq\components\semaphore;
 
+use mikemadisonweb\rabbitmq\components\Logger;
 use yii\redis\Connection;
 
 /**
@@ -46,18 +47,25 @@ abstract class Semaphore
     protected $retryInterval = 100000;
 
     /**
+     * @var Logger Logger 实例
+     */
+    protected $logger;
+
+    /**
      * 构造函数
      * @param Connection $redis Redis 连接实例（yii\redis\Connection）
      * @param string $key Redis key
      * @param int $limit 并发限制数
+     * @param Logger $logger Logger 实例
      * @param int $ttl 过期时间（秒）
      * @param int $acquireSleep 获取信号量失败时的等待间隔时间（秒），每次重试前等待的秒数，默认 0 表示不等待直接返回
      */
-    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60)
+    public function __construct(Connection $redis, string $key, int $limit, Logger $logger, int $ttl = 600, int $acquireSleep = 60)
     {
         $this->redis = $redis;
         $this->key = $key;
         $this->limit = $limit;
+        $this->logger = $logger;
         $this->ttl = $ttl;
         $this->acquireSleep = $acquireSleep;
     }
@@ -70,20 +78,51 @@ abstract class Semaphore
      */
     public function acquire_wait(): bool
     {
+        $this->logger->logDebug("[Semaphore] acquire_wait() 开始，key: {$this->key}, limit: {$this->limit}, acquireSleep: {$this->acquireSleep}");
+
         // 如果未设置等待间隔时间，直接尝试一次获取
         if ($this->acquireSleep <= 0) {
-            return $this->acquire();
+            $result = $this->acquire();
+            return $result;
         }
 
         // 循环尝试获取信号量，直到成功
+        $attemptCount = 0;
         while (true) {
+            $attemptCount++;
+
             // 尝试获取信号量
-            if ($this->acquire()) {
+            $acquireStart = microtime(true);
+            $result = $this->acquire();
+            $acquireEnd = microtime(true);
+            $acquireTime = round(($acquireEnd - $acquireStart) * 1000, 2);
+            if ($result) {
+                $this->logger->logDebug("[Semaphore] 成功获取信号量，尝试次数: {$attemptCount}, 耗时: {$acquireTime}ms, key: {$this->key}");
                 return true;
             }
 
-            // 获取失败，等待 acquireSleep 秒后重试
-            sleep($this->acquireSleep);
+            // 获取失败，随机浮动（±20%）以分散重试请求，避免所有进程同时重试造成 Redis 压力峰值
+            // 例如：acquireSleep=60 秒时，实际等待时间为 48-72 秒之间随机
+            $jitterPercent = 0.2; // 20% 的随机浮动
+            $jitterRange = (int)round($this->acquireSleep * $jitterPercent);
+            $sleepTimeWithJitter = $this->acquireSleep + mt_rand(-$jitterRange, $jitterRange);
+            $sleepTimeWithJitter = max(1, $sleepTimeWithJitter); // 至少等待 1 秒
+
+            $this->logger->logDebug("[Semaphore] 第 {$attemptCount} 次获取信号量失败，等待时间: {$sleepTimeWithJitter}秒（基础: {$this->acquireSleep}秒, 浮动范围: ±{$jitterRange}秒）, key: {$this->key}");
+
+            // 如果返回值 > 0，说明被信号中断，应该处理信号并返回 false 让上层判断
+            $sleepStart = microtime(true);
+            $remainingSeconds = sleep($sleepTimeWithJitter);
+            $sleepEnd = microtime(true);
+            $actualSleepTimeElapsed = round($sleepEnd - $sleepStart, 2);
+
+            // 如果 sleep() 被信号中断（返回值 > 0），返回 false 让上层处理信号
+            if ($remainingSeconds > 0) {
+                $this->logger->logDebug("[Semaphore] sleep 被信号中断，剩余等待时间: {$remainingSeconds}秒, 实际等待: {$actualSleepTimeElapsed}秒, key: {$this->key}");
+
+                // 返回 false，让上层（Consumer）处理挂起的信号并根据 forceStop 标志判断是否退出
+                return false;
+            }
         }
     }
 

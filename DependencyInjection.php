@@ -358,8 +358,14 @@ class DependencyInjection implements BootstrapInterface
             throw new InvalidConfigException("Semaphore class '{$type}' must extend " . Semaphore::class);
         }
 
+        // 获取 Logger 实例
+        /**
+         * @var $logger Logger
+         */
+        $logger = \Yii::$container->get(Configuration::LOGGER_SERVICE_NAME);
+
         // 创建 semaphore 实例
-        return new $type($redis, $key, $limit, $ttl, $acquireSleep);
+        return new $type($redis, $key, $limit, $logger, $ttl, $acquireSleep);
     }
 
 }

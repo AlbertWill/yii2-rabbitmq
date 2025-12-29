@@ -542,7 +542,7 @@ class IntegrationRabbitMQTest extends TestCase
         
         // 创建 semaphore
         $semaphoreKey = $this->generateTestKey('test:semaphore:rabbitmq');
-        $semaphore = new IncrSemaphore(self::$redis, $semaphoreKey, 5, 600);
+        $semaphore = new IncrSemaphore(self::$redis, $semaphoreKey, 5, $this->createSilentLogger(), 600, 60);
         
         // 验证 semaphore 可以获取
         $acquired = $semaphore->acquire();

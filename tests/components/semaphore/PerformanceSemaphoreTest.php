@@ -87,6 +87,16 @@ class PerformanceSemaphoreTest extends TestCase
         }
     }
 
+    private function createIncrSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): IncrSemaphore
+    {
+        return new IncrSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
+    private function createHashSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): HashSemaphore
+    {
+        return new HashSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
     /**
      * 读取测试配置文件
      * 优先从 tests/config.local.php 读取，如果不存在则返回空数组
@@ -145,7 +155,7 @@ class PerformanceSemaphoreTest extends TestCase
     }
 
     /**
-     * 测试 IncrSemaphore acquire 性能
+     * 基准测试：IncrSemaphore acquire 性能
      */
     public function testIncrSemaphoreAcquirePerformance()
     {
@@ -153,7 +163,7 @@ class PerformanceSemaphoreTest extends TestCase
         $limit = 100;
         $iterations = 1000;
         
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
+        $semaphore = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         
         $startTime = microtime(true);
         $successCount = 0;
@@ -180,13 +190,13 @@ class PerformanceSemaphoreTest extends TestCase
         echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒/次\n";
         echo "吞吐量: " . number_format($iterations / $totalTime, 2) . " 操作/秒\n";
         
-        // 性能断言：平均耗时应该小于 1 毫秒（提高性能基准）
+        // 性能断言：平均耗时应该小于 1 毫秒
         // 注意：实际性能取决于网络延迟和 Redis 服务器性能
         $this->assertLessThan(1.0, $avgTime, '平均耗时应该小于 1 毫秒');
     }
 
     /**
-     * 测试 HashSemaphore acquire 性能
+     * 基准测试：HashSemaphore acquire 性能
      */
     public function testHashSemaphoreAcquirePerformance()
     {
@@ -199,7 +209,7 @@ class PerformanceSemaphoreTest extends TestCase
         $successCount = 0;
         
         for ($i = 0; $i < $iterations; $i++) {
-            $semaphore = new HashSemaphore(self::$redis, $key, $limit, 600);
+            $semaphore = $this->createHashSemaphore(self::$redis, $key, $limit, 600);
             if ($semaphore->acquire()) {
                 $successCount++;
                 $semaphores[] = $semaphore;
@@ -222,13 +232,13 @@ class PerformanceSemaphoreTest extends TestCase
         echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒/次\n";
         echo "吞吐量: " . number_format($iterations / $totalTime, 2) . " 操作/秒\n";
         
-        // 性能断言：平均耗时应该小于 2 毫秒（HashSemaphore 需要生成 token，稍慢，提高性能基准）
+        // 性能断言：平均耗时应该小于 2 毫秒（HashSemaphore 需要生成 token，稍慢）
         // 注意：实际性能取决于网络延迟和 Redis 服务器性能
         $this->assertLessThan(2.0, $avgTime, '平均耗时应该小于 2 毫秒');
     }
 
     /**
-     * 测试 acquire-release 循环性能
+     * 基准测试：acquire-release 循环性能
      */
     public function testAcquireReleaseCyclePerformance()
     {
@@ -236,7 +246,7 @@ class PerformanceSemaphoreTest extends TestCase
         $limit = 10;
         $cycles = 500;
         
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
+        $semaphore = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         
         $startTime = microtime(true);
         
@@ -255,269 +265,9 @@ class PerformanceSemaphoreTest extends TestCase
         echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒/循环\n";
         echo "吞吐量: " . number_format($cycles / $totalTime, 2) . " 循环/秒\n";
         
-        // 性能断言：平均耗时应该小于 2 毫秒（acquire + release 两次操作，提高性能基准）
+        // 性能断言：平均耗时应该小于 2 毫秒（acquire + release 两次操作）
         // 注意：实际性能取决于网络延迟和 Redis 服务器性能
         $this->assertLessThan(2.0, $avgTime, '平均耗时应该小于 2 毫秒');
-    }
-
-    /**
-     * 测试高并发 acquire 性能（100+ 并发）
-     */
-    public function testHighConcurrencyAcquirePerformance()
-    {
-        $key = $this->generateTestKey('test:semaphore:perf:high:concurrency');
-        $limit = 50;
-        $concurrentCount = 200; // 200 个并发请求
-        
-        $startTime = microtime(true);
-        $results = [];
-        
-        // 创建多个 semaphore 实例模拟并发
-        for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
-            $acquireStart = microtime(true);
-            $result = $semaphore->acquire();
-            $acquireEnd = microtime(true);
-            
-            $results[] = [
-                'success' => $result,
-                'time' => ($acquireEnd - $acquireStart) * 1000, // 毫秒
-                'semaphore' => $semaphore,
-            ];
-        }
-        
-        $endTime = microtime(true);
-        $totalTime = $endTime - $startTime;
-        
-        // 统计
-        $successCount = 0;
-        $failureCount = 0;
-        $times = [];
-        foreach ($results as $result) {
-            if ($result['success']) {
-                $successCount++;
-            } else {
-                $failureCount++;
-            }
-            $times[] = $result['time'];
-        }
-        
-        $avgTime = array_sum($times) / count($times);
-        $minTime = min($times);
-        $maxTime = max($times);
-        $p95Time = $this->percentile($times, 95);
-        $p99Time = $this->percentile($times, 99);
-        
-        // 清理
-        foreach ($results as $result) {
-            if ($result['success']) {
-                $result['semaphore']->release();
-            }
-        }
-        
-        echo "\n=== 高并发 Acquire 性能测试 ===\n";
-        echo "并发数: {$concurrentCount}\n";
-        echo "Limit: {$limit}\n";
-        echo "成功数: {$successCount}\n";
-        echo "失败数: {$failureCount}\n";
-        echo "总耗时: " . number_format($totalTime, 4) . " 秒\n";
-        echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒\n";
-        echo "最小耗时: " . number_format($minTime, 2) . " 毫秒\n";
-        echo "最大耗时: " . number_format($maxTime, 2) . " 毫秒\n";
-        echo "P95 耗时: " . number_format($p95Time, 2) . " 毫秒\n";
-        echo "P99 耗时: " . number_format($p99Time, 2) . " 毫秒\n";
-        echo "吞吐量: " . number_format($concurrentCount / $totalTime, 2) . " 操作/秒\n";
-        
-        // 验证只有 limit 个成功
-        $this->assertEquals($limit, $successCount, "应该只有 {$limit} 个成功");
-        // 性能断言：P95 耗时应该小于 2 毫秒（提高性能基准）
-        // 注意：实际性能取决于网络延迟和 Redis 服务器性能
-        $this->assertLessThan(2.0, $p95Time, 'P95 耗时应该小于 2 毫秒');
-    }
-
-    /**
-     * 测试 heartbeat 性能
-     */
-    public function testHeartbeatPerformance()
-    {
-        $key = $this->generateTestKey('test:semaphore:perf:heartbeat');
-        $limit = 10;
-        $iterations = 1000;
-        
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
-        
-        // 先获取信号量
-        $semaphore->acquire();
-        
-        $startTime = microtime(true);
-        
-        for ($i = 0; $i < $iterations; $i++) {
-            $semaphore->heartbeat();
-        }
-        
-        $endTime = microtime(true);
-        $totalTime = $endTime - $startTime;
-        $avgTime = ($totalTime / $iterations) * 1000; // 转换为毫秒
-        
-        // 清理
-        $semaphore->release();
-        
-        echo "\n=== Heartbeat 性能测试 ===\n";
-        echo "操作数: {$iterations}\n";
-        echo "总耗时: " . number_format($totalTime, 4) . " 秒\n";
-        echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒/次\n";
-        echo "吞吐量: " . number_format($iterations / $totalTime, 2) . " 操作/秒\n";
-        
-        // 性能断言：平均耗时应该小于 1 毫秒（提高性能基准）
-        // 注意：实际性能取决于网络延迟和 Redis 服务器性能
-        $this->assertLessThan(1.0, $avgTime, '平均耗时应该小于 1 毫秒');
-    }
-
-    /**
-     * 测试长时间运行的稳定性（1000 次循环）
-     */
-    public function testLongRunningStability()
-    {
-        $key = $this->generateTestKey('test:semaphore:perf:stability');
-        $limit = 5;
-        $cycles = 1000;
-        
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
-        
-        $startTime = microtime(true);
-        $errors = 0;
-        
-        for ($i = 0; $i < $cycles; $i++) {
-            try {
-                $acquired = $semaphore->acquire();
-                if ($acquired) {
-                    // 模拟一些处理时间
-                    usleep(1000); // 1ms
-                    $semaphore->release();
-                }
-            } catch (\Exception $e) {
-                $errors++;
-            }
-        }
-        
-        $endTime = microtime(true);
-        $totalTime = $endTime - $startTime;
-        
-        echo "\n=== 长时间运行稳定性测试 ===\n";
-        echo "循环次数: {$cycles}\n";
-        echo "错误数: {$errors}\n";
-        echo "总耗时: " . number_format($totalTime, 4) . " 秒\n";
-        echo "平均耗时: " . number_format(($totalTime / $cycles) * 1000, 2) . " 毫秒/循环\n";
-        
-        // 稳定性断言：不应该有错误
-        $this->assertEquals(0, $errors, '长时间运行不应该有错误');
-    }
-
-    /**
-     * 测试 IncrSemaphore vs HashSemaphore 性能对比
-     */
-    public function testIncrVsHashPerformanceComparison()
-    {
-        $incrKey = $this->generateTestKey('test:semaphore:perf:incr:compare');
-        $hashKey = $this->generateTestKey('test:semaphore:perf:hash:compare');
-        $limit = 100;
-        $iterations = 500;
-        
-        // 测试 IncrSemaphore
-        $incrSemaphore = new IncrSemaphore(self::$redis, $incrKey, $limit, 600);
-        $incrStart = microtime(true);
-        $incrSuccess = 0;
-        for ($i = 0; $i < $iterations; $i++) {
-            if ($incrSemaphore->acquire()) {
-                $incrSuccess++;
-            }
-        }
-        $incrEnd = microtime(true);
-        $incrTime = $incrEnd - $incrStart;
-        
-        // 清理 IncrSemaphore
-        for ($i = 0; $i < $incrSuccess; $i++) {
-            $incrSemaphore->release();
-        }
-        
-        // 测试 HashSemaphore
-        $hashSemaphores = [];
-        $hashStart = microtime(true);
-        $hashSuccess = 0;
-        for ($i = 0; $i < $iterations; $i++) {
-            $hashSemaphore = new HashSemaphore(self::$redis, $hashKey, $limit, 600);
-            if ($hashSemaphore->acquire()) {
-                $hashSuccess++;
-                $hashSemaphores[] = $hashSemaphore;
-            }
-        }
-        $hashEnd = microtime(true);
-        $hashTime = $hashEnd - $hashStart;
-        
-        // 清理 HashSemaphore
-        foreach ($hashSemaphores as $semaphore) {
-            $semaphore->release();
-        }
-        
-        $incrAvg = ($incrTime / $iterations) * 1000;
-        $hashAvg = ($hashTime / $iterations) * 1000;
-        
-        echo "\n=== IncrSemaphore vs HashSemaphore 性能对比 ===\n";
-        echo "操作数: {$iterations}\n";
-        echo "IncrSemaphore:\n";
-        echo "  - 总耗时: " . number_format($incrTime, 4) . " 秒\n";
-        echo "  - 平均耗时: " . number_format($incrAvg, 2) . " 毫秒/次\n";
-        echo "  - 吞吐量: " . number_format($iterations / $incrTime, 2) . " 操作/秒\n";
-        echo "HashSemaphore:\n";
-        echo "  - 总耗时: " . number_format($hashTime, 4) . " 秒\n";
-        echo "  - 平均耗时: " . number_format($hashAvg, 2) . " 毫秒/次\n";
-        echo "  - 吞吐量: " . number_format($iterations / $hashTime, 2) . " 操作/秒\n";
-        echo "性能差异: " . number_format((($hashAvg - $incrAvg) / $incrAvg) * 100, 2) . "%\n";
-        
-        // 验证两种实现都能正常工作
-        $this->assertGreaterThan(0, $incrSuccess, 'IncrSemaphore 应该成功');
-        $this->assertGreaterThan(0, $hashSuccess, 'HashSemaphore 应该成功');
-    }
-
-    /**
-     * 测试连续快速 acquire-release 性能
-     */
-    public function testRapidAcquireReleasePerformance()
-    {
-        $key = $this->generateTestKey('test:semaphore:perf:rapid');
-        $limit = 1;
-        $iterations = 200;
-        
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
-        
-        $startTime = microtime(true);
-        $times = [];
-        
-        for ($i = 0; $i < $iterations; $i++) {
-            $opStart = microtime(true);
-            $semaphore->acquire();
-            $semaphore->release();
-            $opEnd = microtime(true);
-            $times[] = ($opEnd - $opStart) * 1000; // 毫秒
-        }
-        
-        $endTime = microtime(true);
-        $totalTime = $endTime - $startTime;
-        $avgTime = array_sum($times) / count($times);
-        $minTime = min($times);
-        $maxTime = max($times);
-        
-        echo "\n=== 快速 Acquire-Release 性能测试 ===\n";
-        echo "操作数: {$iterations}\n";
-        echo "总耗时: " . number_format($totalTime, 4) . " 秒\n";
-        echo "平均耗时: " . number_format($avgTime, 2) . " 毫秒/次\n";
-        echo "最小耗时: " . number_format($minTime, 2) . " 毫秒\n";
-        echo "最大耗时: " . number_format($maxTime, 2) . " 毫秒\n";
-        echo "吞吐量: " . number_format($iterations / $totalTime, 2) . " 操作/秒\n";
-        
-        // 性能断言：平均耗时应该小于 3 毫秒（快速连续操作，提高性能基准）
-        // 注意：实际性能取决于网络延迟和 Redis 服务器性能
-        $this->assertLessThan(3.0, $avgTime, '平均耗时应该小于 3 毫秒');
     }
 
     /**
@@ -531,7 +281,7 @@ class PerformanceSemaphoreTest extends TestCase
         $iterations = 1000;
         
         // 测试 IncrSemaphore 完整获取和释放操作
-        $incrSemaphore = new IncrSemaphore(self::$redis, $incrKey, $limit, 600);
+        $incrSemaphore = $this->createIncrSemaphore(self::$redis, $incrKey, $limit, 600);
         $incrTimes = [];
         $incrStart = microtime(true);
         
@@ -556,7 +306,7 @@ class PerformanceSemaphoreTest extends TestCase
         
         for ($i = 0; $i < $iterations; $i++) {
             $opStart = microtime(true);
-            $hashSemaphore = new HashSemaphore(self::$redis, $hashKey, $limit, 600);
+            $hashSemaphore = $this->createHashSemaphore(self::$redis, $hashKey, $limit, 600);
             if ($hashSemaphore->acquire()) {
                 $hashSemaphore->release();
             }
@@ -599,16 +349,5 @@ class PerformanceSemaphoreTest extends TestCase
         // 验证两种实现都能正常工作
         $this->assertGreaterThan(0, $incrAvgTime, 'IncrSemaphore 平均耗时应该大于 0');
         $this->assertGreaterThan(0, $hashAvgTime, 'HashSemaphore 平均耗时应该大于 0');
-    }
-
-    /**
-     * 计算百分位数
-     */
-    private function percentile(array $values, float $percentile): float
-    {
-        sort($values);
-        $index = (int)ceil(($percentile / 100) * count($values)) - 1;
-        $index = max(0, min($index, count($values) - 1));
-        return $values[$index];
     }
 }

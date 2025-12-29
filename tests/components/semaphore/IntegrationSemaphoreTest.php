@@ -102,6 +102,16 @@ class IntegrationSemaphoreTest extends TestCase
         }
     }
 
+    private function createIncrSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): IncrSemaphore
+    {
+        return new IncrSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
+    private function createHashSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): HashSemaphore
+    {
+        return new HashSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
     /**
      * 读取测试配置文件
      * 优先从 tests/config.local.php 读取，如果不存在则返回空数组
@@ -179,7 +189,7 @@ class IntegrationSemaphoreTest extends TestCase
         
         // 创建多个 semaphore 实例
         for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphores[] = new IncrSemaphore(self::$redis, $key, $limit, 600);
+            $semaphores[] = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         }
         
         // 顺序执行 acquire（在实际场景中，这些操作会同时发生）
@@ -221,7 +231,7 @@ class IntegrationSemaphoreTest extends TestCase
         
         // 创建多个 semaphore 实例（每个实例有唯一的 token）
         for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphores[] = new HashSemaphore(self::$redis, $key, $limit, 600);
+            $semaphores[] = $this->createHashSemaphore(self::$redis, $key, $limit, 600);
         }
         
         // 顺序执行 acquire
@@ -257,7 +267,7 @@ class IntegrationSemaphoreTest extends TestCase
         $limit = 3;
         
         // 第一轮：获取
-        $semaphore1 = new IncrSemaphore(self::$redis, $key, $limit, 600);
+        $semaphore1 = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         $result1 = $semaphore1->acquire();
         $this->assertTrue($result1, '第一次获取应该成功');
         
@@ -265,7 +275,7 @@ class IntegrationSemaphoreTest extends TestCase
         $semaphore1->release();
         
         // 第二轮：再次获取
-        $semaphore2 = new IncrSemaphore(self::$redis, $key, $limit, 600);
+        $semaphore2 = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         $result2 = $semaphore2->acquire();
         $this->assertTrue($result2, '释放后应该可以再次获取');
         
@@ -286,7 +296,7 @@ class IntegrationSemaphoreTest extends TestCase
         
         // 创建多个实例
         for ($i = 0; $i < $limit + 2; $i++) {
-            $semaphores[] = new HashSemaphore(self::$redis, $key, $limit, 600);
+            $semaphores[] = $this->createHashSemaphore(self::$redis, $key, $limit, 600);
         }
         
         // 连续获取直到达到 limit
@@ -322,7 +332,7 @@ class IntegrationSemaphoreTest extends TestCase
         $limit = 5;
         $cycles = 10;
         
-        $semaphore = new IncrSemaphore(self::$redis, $key, $limit, 600);
+        $semaphore = $this->createIncrSemaphore(self::$redis, $key, $limit, 600);
         
         // 执行多次获取-释放循环
         for ($i = 0; $i < $cycles; $i++) {
@@ -340,7 +350,7 @@ class IntegrationSemaphoreTest extends TestCase
     {
         $key = $this->generateTestKey('test:heartbeat');
         
-        $semaphore = new IncrSemaphore(self::$redis, $key, 5, 10); // TTL = 10 秒
+        $semaphore = $this->createIncrSemaphore(self::$redis, $key, 5, 10); // TTL = 10 秒
         
         // 获取 semaphore
         $result = $semaphore->acquire();
@@ -379,12 +389,12 @@ class IntegrationSemaphoreTest extends TestCase
         $limit = 1;
         
         // 第一个实例获取成功
-        $semaphore1 = new IncrSemaphore(self::$redis, $key, $limit, 600, 1); // acquireSleep = 1 秒
+        $semaphore1 = $this->createIncrSemaphore(self::$redis, $key, $limit, 600, 1); // acquireSleep = 1 秒
         $result1 = $semaphore1->acquire();
         $this->assertTrue($result1, '第一个实例应该成功获取');
         
         // 第二个实例应该无法立即获取（因为 limit = 1）
-        $semaphore2 = new IncrSemaphore(self::$redis, $key, $limit, 600, 1);
+        $semaphore2 = $this->createIncrSemaphore(self::$redis, $key, $limit, 600, 1);
         $result2 = $semaphore2->acquire();
         $this->assertFalse($result2, '第二个实例应该无法立即获取');
         
@@ -410,9 +420,9 @@ class IntegrationSemaphoreTest extends TestCase
     {
         $key = $this->generateTestKey('test:limit:one');
         
-        $semaphore1 = new HashSemaphore(self::$redis, $key, 1, 600);
-        $semaphore2 = new HashSemaphore(self::$redis, $key, 1, 600);
-        $semaphore3 = new HashSemaphore(self::$redis, $key, 1, 600);
+        $semaphore1 = $this->createHashSemaphore(self::$redis, $key, 1, 600);
+        $semaphore2 = $this->createHashSemaphore(self::$redis, $key, 1, 600);
+        $semaphore3 = $this->createHashSemaphore(self::$redis, $key, 1, 600);
         
         // 第一次获取应该成功
         $result1 = $semaphore1->acquire();
@@ -450,7 +460,7 @@ class IntegrationSemaphoreTest extends TestCase
         
         // 创建多个 semaphore 实例
         for ($i = 0; $i < $concurrentCount; $i++) {
-            $semaphores[] = new HashSemaphore(self::$redis, $key, $limit, 600);
+            $semaphores[] = $this->createHashSemaphore(self::$redis, $key, $limit, 600);
         }
         
         // 快速顺序执行 acquire（模拟并发）

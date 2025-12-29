@@ -136,7 +136,7 @@ class Configuration extends Component
             'redis_component_name'=>'redis',
             'limit'=>-1,//默认值-1代表不使用信号量控制
             'ttl'=>300,//默认值300秒
-            'acquire_sleep'=>60,//获取信号量失败时的等待间隔时间（秒）
+            'acquire_sleep'=>30,//获取信号量失败时的等待间隔时间（秒），详情参考README.md
         ]
     ];
 

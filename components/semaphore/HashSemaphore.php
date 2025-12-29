@@ -2,6 +2,7 @@
 
 namespace mikemadisonweb\rabbitmq\components\semaphore;
 
+use mikemadisonweb\rabbitmq\components\Logger;
 use yii\redis\Connection;
 
 /**
@@ -15,9 +16,9 @@ class HashSemaphore extends Semaphore
      */
     private $token;
 
-    public function __construct(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 0)
+    public function __construct(Connection $redis, string $key, int $limit, Logger $logger, int $ttl = 600, int $acquireSleep = 60)
     {
-        parent::__construct($redis, $key, $limit, $ttl, $acquireSleep);
+        parent::__construct($redis, $key, $limit, $logger, $ttl, $acquireSleep);
         $this->token = self::genToken();
     }
 

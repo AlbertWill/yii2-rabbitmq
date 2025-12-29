@@ -538,14 +538,14 @@ class ConsumerTest extends TestCase
         $semaphore = $this->createMock(Semaphore::class);
         $semaphore->expects($this->once())
             ->method('acquire_wait')
-            ->willThrowException(new \RuntimeException('Failed to acquire semaphore'));
+            ->willReturn(false); // 返回 false 表示获取失败（达到 limit）
         
         $consumer = new Consumer($connection, $routing, $logger, true, $semaphore);
         $consumer->setQueues(['queue' => 'callback']);
         $consumer->setName('test-consumer');
         
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage("Failed to acquire semaphore for consumer 'test-consumer'");
+        $this->expectExceptionMessage("Failed to acquire semaphore for consumer 'test-consumer': Semaphore limit reached");
         $consumer->consume();
     }
 

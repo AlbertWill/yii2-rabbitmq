@@ -17,6 +17,11 @@ class IncrSemaphoreTest extends TestCase
         return $redis;
     }
 
+    private function createSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): IncrSemaphore
+    {
+        return new IncrSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
     public function testAcquireSuccess()
     {
         $redis = $this->createRedisMock();
@@ -25,7 +30,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(1); // 成功获取
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         $this->assertTrue($result);
@@ -40,7 +45,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0); // 达到限制，获取失败
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         $this->assertFalse($result);
@@ -62,7 +67,7 @@ class IncrSemaphoreTest extends TestCase
             }))
             ->willReturn(1);
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->acquire();
     }
 
@@ -74,7 +79,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(5); // 释放后剩余 5
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release();
     }
 
@@ -87,7 +92,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0);
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release(); // 应该不会抛出异常
     }
 
@@ -100,7 +105,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0);
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release(); // 应该不会抛出异常
     }
 
@@ -119,7 +124,7 @@ class IncrSemaphoreTest extends TestCase
             }))
             ->willReturn(5); // 释放后还有 5
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release();
     }
 
@@ -138,7 +143,7 @@ class IncrSemaphoreTest extends TestCase
             }))
             ->willReturn(1); // 续期成功
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->heartbeat();
     }
 
@@ -150,7 +155,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0); // key 不存在或值为 0
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->heartbeat(); // 应该不会抛出异常
     }
 
@@ -162,7 +167,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0); // 值为 0，不续期
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->heartbeat(); // 应该不会抛出异常
     }
 
@@ -176,7 +181,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(1); // 成功获取
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600, 0); // acquireSleep = 0
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600, 0); // acquireSleep = 0
         $result = $semaphore->acquire_wait();
 
         $this->assertTrue($result);
@@ -185,7 +190,7 @@ class IncrSemaphoreTest extends TestCase
     public function testConstructor()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new IncrSemaphore($redis, 'test:key', 5, 300, 30);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 5, 300, 30);
 
         // 验证属性设置
         $this->assertEquals('test:key', $this->getInaccessibleProperty($semaphore, 'key'));
@@ -202,7 +207,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         // null 应该被视为失败
@@ -217,7 +222,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         // 返回 null 不应该抛出异常
         $semaphore->release();
     }
@@ -230,7 +235,7 @@ class IncrSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         // 返回 null 不应该抛出异常
         $semaphore->heartbeat();
     }
@@ -251,7 +256,7 @@ class IncrSemaphoreTest extends TestCase
                 1   // 再次获取成功
             );
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         
         // 第一次获取
         $result1 = $semaphore->acquire();
@@ -280,7 +285,7 @@ class IncrSemaphoreTest extends TestCase
                 0               // 第 6 次达到限制，获取失败
             );
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', $limit, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', $limit, 600);
         
         // 连续获取直到达到 limit
         for ($i = 0; $i < $limit; $i++) {
@@ -310,7 +315,7 @@ class IncrSemaphoreTest extends TestCase
                 1               // 释放后可以再次获取
             );
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', $limit, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', $limit, 600);
         
         // 连续获取直到达到 limit
         for ($i = 0; $i < $limit; $i++) {
@@ -346,7 +351,7 @@ class IncrSemaphoreTest extends TestCase
                 1   // 释放后可以再次获取
             );
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 1, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 1, 600);
         
         // 第一次获取应该成功
         $result1 = $semaphore->acquire();
@@ -385,7 +390,7 @@ class IncrSemaphoreTest extends TestCase
                 }
             });
 
-        $semaphore = new IncrSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         
         // 执行多次获取-释放循环
         for ($i = 0; $i < $cycles; $i++) {

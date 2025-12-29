@@ -17,6 +17,11 @@ class HashSemaphoreTest extends TestCase
         return $redis;
     }
 
+    private function createSemaphore(Connection $redis, string $key, int $limit, int $ttl = 600, int $acquireSleep = 60): HashSemaphore
+    {
+        return new HashSemaphore($redis, $key, $limit, $this->createSilentLogger(), $ttl, $acquireSleep);
+    }
+
     public function testAcquireSuccess()
     {
         $redis = $this->createRedisMock();
@@ -25,7 +30,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(1); // 成功获取
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         $this->assertTrue($result);
@@ -40,7 +45,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0); // 达到限制，获取失败
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         $this->assertFalse($result);
@@ -63,7 +68,7 @@ class HashSemaphoreTest extends TestCase
             }))
             ->willReturn(1);
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->acquire();
     }
 
@@ -72,8 +77,8 @@ class HashSemaphoreTest extends TestCase
         // 这个测试主要验证 token 的唯一性，不需要实际调用 Redis
         $redis = $this->createRedisMock();
         
-        $semaphore1 = new HashSemaphore($redis, 'test:key', 10, 600);
-        $semaphore2 = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore1 = $this->createSemaphore($redis, 'test:key', 10, 600);
+        $semaphore2 = $this->createSemaphore($redis, 'test:key', 10, 600);
 
         $token1 = $this->getInaccessibleProperty($semaphore1, 'token');
         $token2 = $this->getInaccessibleProperty($semaphore2, 'token');
@@ -92,7 +97,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(1); // 成功移除
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release();
     }
 
@@ -105,7 +110,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0);
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release(); // 应该不会抛出异常
     }
 
@@ -125,7 +130,7 @@ class HashSemaphoreTest extends TestCase
             }))
             ->willReturn(1);
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->release();
     }
 
@@ -145,7 +150,7 @@ class HashSemaphoreTest extends TestCase
             }))
             ->willReturn(1); // 续期成功
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->heartbeat();
     }
 
@@ -157,7 +162,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(0); // token 不存在
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $semaphore->heartbeat(); // 应该不会抛出异常
     }
 
@@ -190,7 +195,7 @@ class HashSemaphoreTest extends TestCase
     public function testConstructor()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new HashSemaphore($redis, 'test:key', 5, 300, 30);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 5, 300, 30);
 
         // 验证属性设置
         $this->assertEquals('test:key', $this->getInaccessibleProperty($semaphore, 'key'));
@@ -214,7 +219,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(1); // 成功获取
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600, 0); // acquireSleep = 0
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600, 0); // acquireSleep = 0
         $result = $semaphore->acquire_wait();
 
         $this->assertTrue($result);
@@ -223,7 +228,7 @@ class HashSemaphoreTest extends TestCase
     public function testReleaseUsesCorrectToken()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $token = $this->getInaccessibleProperty($semaphore, 'token');
 
         $redis->expects($this->once())
@@ -245,7 +250,7 @@ class HashSemaphoreTest extends TestCase
     public function testHeartbeatUsesCorrectToken()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $token = $this->getInaccessibleProperty($semaphore, 'token');
 
         $redis->expects($this->once())
@@ -272,7 +277,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result = $semaphore->acquire();
 
         // null 应该被视为失败
@@ -287,7 +292,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         // 返回 null 不应该抛出异常
         $semaphore->release();
     }
@@ -300,7 +305,7 @@ class HashSemaphoreTest extends TestCase
             ->with('eval', $this->anything())
             ->willReturn(null); // 返回 null
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         // 返回 null 不应该抛出异常
         $semaphore->heartbeat();
     }
@@ -312,7 +317,7 @@ class HashSemaphoreTest extends TestCase
     public function testAcquireReleaseAcquireFlow()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $token = $this->getInaccessibleProperty($semaphore, 'token');
         
         $redis->expects($this->exactly(3))
@@ -332,7 +337,7 @@ class HashSemaphoreTest extends TestCase
         $semaphore->release();
         
         // 再次获取（使用新的 token）
-        $semaphore2 = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore2 = $this->createSemaphore($redis, 'test:key', 10, 600);
         $result2 = $semaphore2->acquire();
         $this->assertTrue($result2, '释放后应该可以再次获取');
     }
@@ -354,7 +359,7 @@ class HashSemaphoreTest extends TestCase
 
         $semaphores = [];
         for ($i = 0; $i < $limit + 1; $i++) {
-            $semaphores[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores[] = $this->createSemaphore($redis, 'test:key', $limit, 600);
         }
         
         // 连续获取直到达到 limit
@@ -387,7 +392,7 @@ class HashSemaphoreTest extends TestCase
 
         $semaphores = [];
         for ($i = 0; $i < $limit + 1; $i++) {
-            $semaphores[] = new HashSemaphore($redis, 'test:key', $limit, 600);
+            $semaphores[] = $this->createSemaphore($redis, 'test:key', $limit, 600);
         }
         
         // 连续获取直到达到 limit
@@ -424,9 +429,9 @@ class HashSemaphoreTest extends TestCase
                 1   // 释放后可以再次获取
             );
 
-        $semaphore1 = new HashSemaphore($redis, 'test:key', 1, 600);
-        $semaphore2 = new HashSemaphore($redis, 'test:key', 1, 600);
-        $semaphore3 = new HashSemaphore($redis, 'test:key', 1, 600);
+        $semaphore1 = $this->createSemaphore($redis, 'test:key', 1, 600);
+        $semaphore2 = $this->createSemaphore($redis, 'test:key', 1, 600);
+        $semaphore3 = $this->createSemaphore($redis, 'test:key', 1, 600);
         
         // 第一次获取应该成功
         $result1 = $semaphore1->acquire();
@@ -461,7 +466,7 @@ class HashSemaphoreTest extends TestCase
                 return 1; // 都返回成功
             });
 
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         
         // 执行多次获取-释放循环
         for ($i = 0; $i < $cycles; $i++) {
@@ -479,7 +484,7 @@ class HashSemaphoreTest extends TestCase
     public function testSameInstanceCannotAcquireTwice()
     {
         $redis = $this->createRedisMock();
-        $semaphore = new HashSemaphore($redis, 'test:key', 10, 600);
+        $semaphore = $this->createSemaphore($redis, 'test:key', 10, 600);
         $token = $this->getInaccessibleProperty($semaphore, 'token');
         
         $redis->expects($this->exactly(2))
