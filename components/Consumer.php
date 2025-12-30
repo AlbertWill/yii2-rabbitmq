@@ -625,22 +625,32 @@ class Consumer extends BaseRabbitMQ
      */
     private function channelClosedException($e): void
     {
-        // Channel 级别错误
+        // 尝试关闭旧通道并重置通道引用，强制创建新通道
         try {
             $this->getChannel()->close();
         } catch (\Throwable $closeEx) {
+            // 关闭失败不影响重建流程，记录日志后继续
             $this->logger->logDebug("关闭通道时发生异常: {$closeEx->getMessage()}");
         }
+        $this->ch = null;
 
         //重建channel通道
         try {
             $this->logger->logDebug("开始重建通道...");
+
             $this->setup();
-            $this->logger->logDebug("通道重建成功！");
+
             // 通道重建成功后刷新信号量 TTL（虽然通道重建通常很快，但为保险起见）
             $this->heartbeatSemaphore();
-        } catch (\Exception $chanEx) {
+
+            // 通道重建成功后休眠一段时间，因为setup()不抛出异常不代表通道重建成功
+            $delay = $this->reconnectDelay > 0 ? $this->reconnectDelay : 2;
+            $this->logger->logDebug("通道重建成功！等待 {$delay} 秒后开始使用...");
+            sleep($delay);
+
+        } catch (\Exception | \Throwable $chanEx) {
             $this->logger->logDebug("通道重建失败: {$chanEx->getMessage()}");
+            // 如果重建失败，抛出原始异常，让上层处理（可能会触发连接重建）
             throw $e;
         }
 

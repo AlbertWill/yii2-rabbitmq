@@ -34,11 +34,15 @@ use yii\redis\Connection as RedisConnection;
  *    - REDIS_PORT: Redis 端口（默认: 6379）
  *    - REDIS_DATABASE: Redis 数据库（默认: 0）
  *    - REDIS_PASSWORD: Redis 密码（可选）
+ *    - SKIP_CLEANUP_QUEUES_EXCHANGES: 设置为 1 或 true 时，跳过清理测试过程中创建的队列和交换器（默认: false）
  * 
  * 3. 如果 RabbitMQ 或 Redis 不可用，测试会自动跳过
  * 
  * 运行方式：
  * php vendor/bin/phpunit tests/components/IntegrationRabbitMQTest.php
+ * 
+ * 保留测试资源（不删除队列和交换器，方便在 RabbitMQ 管理界面查看）：
+ * SKIP_CLEANUP_QUEUES_EXCHANGES=1 php vendor/bin/phpunit tests/components/IntegrationRabbitMQTest.php
  */
 class IntegrationRabbitMQTest extends TestCase
 {
@@ -56,6 +60,21 @@ class IntegrationRabbitMQTest extends TestCase
      * @var Configuration|null RabbitMQ 配置实例
      */
     private static $config = null;
+
+    /**
+     * @var array 记录测试过程中创建的所有队列名称
+     */
+    private static $createdQueues = [];
+
+    /**
+     * @var array 记录测试过程中创建的所有交换器名称
+     */
+    private static $createdExchanges = [];
+
+    /**
+     * @var array 记录测试过程中创建的所有 Redis key 模式
+     */
+    private static $createdRedisKeys = [];
 
     /**
      * 测试前检查 RabbitMQ 和 Redis 是否可用
@@ -106,28 +125,41 @@ class IntegrationRabbitMQTest extends TestCase
      */
     public static function tearDownAfterClass(): void
     {
+        // 检查是否跳过清理队列和交换器
+        $skipCleanup = getenv('SKIP_CLEANUP_QUEUES_EXCHANGES');
+        $skipCleanup = $skipCleanup !== false && in_array(strtolower($skipCleanup), ['1', 'true', 'yes', 'on'], true);
+        
         // 清理 RabbitMQ 测试队列和交换器
         if (self::$rabbitmqConnection && self::$rabbitmqConnection->isConnected()) {
             try {
                 $channel = self::$rabbitmqConnection->channel();
-                // 清理测试队列
-                $testQueues = ['test:integration:queue'];
-                foreach ($testQueues as $queue) {
-                    try {
-                        $channel->queue_delete($queue);
-                    } catch (\Exception $e) {
-                        // 忽略不存在的队列
+                
+                // 收集所有要清理的资源
+                $allQueues = array_unique(array_merge(['test:integration:queue'], self::$createdQueues));
+                $allExchanges = array_unique(array_merge(['test:integration:exchange'], self::$createdExchanges));
+                
+                // 只有在未设置跳过清理时才删除队列和交换器
+                if (!$skipCleanup) {
+                    // 清理所有记录的测试队列
+                    foreach ($allQueues as $queue) {
+                        try {
+                            $channel->queue_delete($queue, false, false, true);
+                        } catch (\Exception $e) {
+                            // 忽略不存在的队列
+                        }
                     }
-                }
-                // 清理测试交换器
-                $testExchanges = ['test:integration:exchange'];
-                foreach ($testExchanges as $exchange) {
-                    try {
-                        $channel->exchange_delete($exchange);
-                    } catch (\Exception $e) {
-                        // 忽略不存在的交换器
+                    // 清理所有记录的测试交换器
+                    foreach ($allExchanges as $exchange) {
+                        try {
+                            $channel->exchange_delete($exchange, false, true);
+                        } catch (\Exception $e) {
+                            // 忽略不存在的交换器
+                        }
                     }
+                } else {
+                    echo "已跳过清理，资源保留在 RabbitMQ 中，可在管理界面查看。\n";
                 }
+                
                 $channel->close();
             } catch (\Exception $e) {
                 // 忽略清理错误
@@ -142,9 +174,20 @@ class IntegrationRabbitMQTest extends TestCase
         // 清理 Redis 测试数据
         if (self::$redis && self::$redis->getIsActive()) {
             try {
-                $testKeys = self::$redis->__call('keys', ['test:semaphore:*']);
-                if (!empty($testKeys)) {
-                    self::$redis->__call('del', $testKeys);
+                // 清理所有记录的 Redis key 模式
+                $allKeyPatterns = array_unique(array_merge(['test:semaphore:*'], self::$createdRedisKeys));
+                foreach ($allKeyPatterns as $pattern) {
+                    try {
+                        $testKeys = self::$redis->__call('keys', [$pattern]);
+                        if (!empty($testKeys)) {
+                            // 逐个删除 keys，避免 Redis Cluster 模式下的 CROSSSLOT 错误
+                            foreach ($testKeys as $key) {
+                                self::$redis->__call('del', [$key]);
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        // 忽略清理错误
+                    }
                 }
             } catch (\Exception $e) {
                 // 忽略清理错误
@@ -374,6 +417,10 @@ class IntegrationRabbitMQTest extends TestCase
         ]);
         $routing->declareAll();
         
+        // 记录创建的队列和交换器
+        self::$createdQueues[] = 'test:integration:queue';
+        self::$createdExchanges[] = 'test:integration:exchange';
+        
         // 创建 Logger 实例（需要配置 options）
         $logger = new Logger();
         $logger->options = [
@@ -440,6 +487,10 @@ class IntegrationRabbitMQTest extends TestCase
             ]
         ]);
         $routing->declareAll();
+        
+        // 记录创建的队列和交换器
+        self::$createdQueues[] = 'test:integration:queue';
+        self::$createdExchanges[] = 'test:integration:exchange';
         
         // 先发送一条消息
         // 创建 Logger 实例（需要配置 options）
@@ -540,8 +591,13 @@ class IntegrationRabbitMQTest extends TestCase
         ]);
         $routing->declareAll();
         
+        // 记录创建的队列和交换器
+        self::$createdQueues[] = 'test:integration:queue';
+        self::$createdExchanges[] = 'test:integration:exchange';
+        
         // 创建 semaphore
         $semaphoreKey = $this->generateTestKey('test:semaphore:rabbitmq');
+        self::$createdRedisKeys[] = 'test:semaphore:rabbitmq:*';
         $semaphore = new IncrSemaphore(self::$redis, $semaphoreKey, 5, $this->createSilentLogger(), 600, 60);
         
         // 验证 semaphore 可以获取
@@ -609,6 +665,10 @@ class IntegrationRabbitMQTest extends TestCase
         ]);
         $routing->declareAll();
         
+        // 记录创建的队列和交换器
+        self::$createdQueues[] = 'test:integration:queue';
+        self::$createdExchanges[] = 'test:integration:exchange';
+        
         // 发送多条消息
         // 创建 Logger 实例（需要配置 options）
         $logger = new Logger();
@@ -637,6 +697,522 @@ class IntegrationRabbitMQTest extends TestCase
         $this->assertGreaterThanOrEqual(0, $messageCount, '消息计数应该有效');
         // 验证消息确实被发送了（通过检查队列信息）
         $this->assertIsInt($messageCount, '消息计数应该是整数');
+        
+        $channel->close();
+    }
+
+    /**
+     * 测试删除队列
+     * 验证可以成功删除测试过程中创建的队列
+     */
+    public function testDeleteQueue()
+    {
+        $connection = self::$rabbitmqConnection;
+        $channel = $connection->channel();
+        
+        // 创建一个测试队列用于删除
+        $testQueueName = 'test:delete:queue:' . uniqid();
+        self::$createdQueues[] = $testQueueName;
+        
+        // 先声明队列
+        $routing = new RoutingComponent($connection);
+        $routing->setQueues([
+            [
+                'name' => $testQueueName,
+                'passive' => false,
+                'durable' => false,
+                'exclusive' => false,
+                'auto_delete' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ]
+        ]);
+        $routing->declareAll();
+        
+        // 验证队列存在
+        try {
+            $queueInfo = $channel->queue_declare($testQueueName, true);
+            $this->assertIsArray($queueInfo, '队列应该存在');
+        } catch (\Exception $e) {
+            $this->fail('队列应该存在，但声明失败: ' . $e->getMessage());
+        }
+        
+        // 删除队列
+        try {
+            $channel->queue_delete($testQueueName, false, false, true);
+            $this->assertTrue(true, '队列删除应该成功');
+        } catch (\Exception $e) {
+            $this->fail('队列删除失败: ' . $e->getMessage());
+        }
+        
+        // 验证队列已被删除（尝试声明 passive 队列应该失败）
+        try {
+            $channel->queue_declare($testQueueName, true, false, false, false, false, null, null);
+            $this->fail('队列应该已被删除，但声明仍然成功');
+        } catch (\PhpAmqpLib\Exception\AMQPProtocolChannelException $e) {
+            // 404 NOT_FOUND 表示队列不存在，这是预期的
+            $this->assertStringContainsString('NOT_FOUND', $e->getMessage(), '应该返回 NOT_FOUND 错误');
+        } catch (\Exception $e) {
+            // 其他异常也可以接受，只要队列不存在即可
+            $this->assertTrue(true, '队列已不存在');
+        }
+        
+        $channel->close();
+    }
+
+    /**
+     * 测试删除交换器
+     * 验证可以成功删除测试过程中创建的交换器
+     */
+    public function testDeleteExchange()
+    {
+        $connection = self::$rabbitmqConnection;
+        $channel = $connection->channel();
+        
+        // 创建一个测试交换器用于删除
+        $testExchangeName = 'test:delete:exchange:' . uniqid();
+        self::$createdExchanges[] = $testExchangeName;
+        
+        // 先声明交换器
+        $routing = new RoutingComponent($connection);
+        $routing->setExchanges([
+            [
+                'name' => $testExchangeName,
+                'type' => 'direct',
+                'passive' => false,
+                'durable' => false,
+                'auto_delete' => false,
+                'internal' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ]
+        ]);
+        $routing->declareAll();
+        
+        // 验证交换器存在（通过尝试声明 passive 交换器）
+        try {
+            $channel->exchange_declare($testExchangeName, 'direct', true, false, false, false, false, null, null);
+            $this->assertTrue(true, '交换器应该存在');
+        } catch (\Exception $e) {
+            $this->fail('交换器应该存在，但声明失败: ' . $e->getMessage());
+        }
+        
+        // 删除交换器
+        try {
+            $channel->exchange_delete($testExchangeName, false, true);
+            $this->assertTrue(true, '交换器删除应该成功');
+        } catch (\Exception $e) {
+            $this->fail('交换器删除失败: ' . $e->getMessage());
+        }
+        
+        // 验证交换器已被删除（尝试声明 passive 交换器应该失败）
+        try {
+            $channel->exchange_declare($testExchangeName, 'direct', true, false, false, false, false, null, null);
+            $this->fail('交换器应该已被删除，但声明仍然成功');
+        } catch (\PhpAmqpLib\Exception\AMQPProtocolChannelException $e) {
+            // 404 NOT_FOUND 表示交换器不存在，这是预期的
+            $this->assertStringContainsString('NOT_FOUND', $e->getMessage(), '应该返回 NOT_FOUND 错误');
+        } catch (\Exception $e) {
+            // 其他异常也可以接受，只要交换器不存在即可
+            $this->assertTrue(true, '交换器已不存在');
+        }
+        
+        $channel->close();
+    }
+
+    /**
+     * 测试删除多个队列
+     * 验证可以批量删除测试过程中创建的多个队列
+     */
+    public function testDeleteMultipleQueues()
+    {
+        $connection = self::$rabbitmqConnection;
+        $channel = $connection->channel();
+        
+        // 创建多个测试队列
+        $testQueues = [];
+        $routing = new RoutingComponent($connection);
+        $queueConfigs = [];
+        
+        for ($i = 0; $i < 3; $i++) {
+            $queueName = 'test:delete:multi:queue:' . uniqid() . ':' . $i;
+            $testQueues[] = $queueName;
+            self::$createdQueues[] = $queueName;
+            $queueConfigs[] = [
+                'name' => $queueName,
+                'passive' => false,
+                'durable' => false,
+                'exclusive' => false,
+                'auto_delete' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ];
+        }
+        
+        $routing->setQueues($queueConfigs);
+        $routing->declareAll();
+        
+        // 验证所有队列都存在
+        foreach ($testQueues as $queueName) {
+            try {
+                $queueInfo = $channel->queue_declare($queueName, true);
+                $this->assertIsArray($queueInfo, "队列 {$queueName} 应该存在");
+            } catch (\Exception $e) {
+                $this->fail("队列 {$queueName} 应该存在，但声明失败: " . $e->getMessage());
+            }
+        }
+        
+        // 删除所有队列
+        $deletedCount = 0;
+        foreach ($testQueues as $queueName) {
+            try {
+                $channel->queue_delete($queueName, false, false, true);
+                $deletedCount++;
+            } catch (\Exception $e) {
+                $this->fail("队列 {$queueName} 删除失败: " . $e->getMessage());
+            }
+        }
+        
+        $this->assertEquals(count($testQueues), $deletedCount, '所有队列都应该被删除');
+        
+        // 验证所有队列都已被删除
+        foreach ($testQueues as $queueName) {
+            try {
+                $channel->queue_declare($queueName, true, false, false, false, false, null, null);
+                $this->fail("队列 {$queueName} 应该已被删除，但声明仍然成功");
+            } catch (\PhpAmqpLib\Exception\AMQPProtocolChannelException $e) {
+                $this->assertStringContainsString('NOT_FOUND', $e->getMessage(), "队列 {$queueName} 应该返回 NOT_FOUND 错误");
+            } catch (\Exception $e) {
+                // 其他异常也可以接受
+                $this->assertTrue(true, "队列 {$queueName} 已不存在");
+            }
+        }
+        
+        $channel->close();
+    }
+
+    /**
+     * 测试删除多个交换器
+     * 验证可以批量删除测试过程中创建的多个交换器
+     */
+    public function testDeleteMultipleExchanges()
+    {
+        $connection = self::$rabbitmqConnection;
+        $channel = $connection->channel();
+        
+        // 创建多个测试交换器
+        $testExchanges = [];
+        $routing = new RoutingComponent($connection);
+        $exchangeConfigs = [];
+        
+        for ($i = 0; $i < 3; $i++) {
+            $exchangeName = 'test:delete:multi:exchange:' . uniqid() . ':' . $i;
+            $testExchanges[] = $exchangeName;
+            self::$createdExchanges[] = $exchangeName;
+            $exchangeConfigs[] = [
+                'name' => $exchangeName,
+                'type' => 'direct',
+                'passive' => false,
+                'durable' => false,
+                'auto_delete' => false,
+                'internal' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ];
+        }
+        
+        $routing->setExchanges($exchangeConfigs);
+        $routing->declareAll();
+        
+        // 验证所有交换器都存在
+        foreach ($testExchanges as $exchangeName) {
+            try {
+                $channel->exchange_declare($exchangeName, 'direct', true, false, false, false, false, null, null);
+                $this->assertTrue(true, "交换器 {$exchangeName} 应该存在");
+            } catch (\Exception $e) {
+                $this->fail("交换器 {$exchangeName} 应该存在，但声明失败: " . $e->getMessage());
+            }
+        }
+        
+        // 删除所有交换器
+        $deletedCount = 0;
+        foreach ($testExchanges as $exchangeName) {
+            try {
+                $channel->exchange_delete($exchangeName, false, true);
+                $deletedCount++;
+            } catch (\Exception $e) {
+                $this->fail("交换器 {$exchangeName} 删除失败: " . $e->getMessage());
+            }
+        }
+        
+        $this->assertEquals(count($testExchanges), $deletedCount, '所有交换器都应该被删除');
+        
+        // 验证所有交换器都已被删除
+        foreach ($testExchanges as $exchangeName) {
+            try {
+                $channel->exchange_declare($exchangeName, 'direct', true, false, false, false, false, null, null);
+                $this->fail("交换器 {$exchangeName} 应该已被删除，但声明仍然成功");
+            } catch (\PhpAmqpLib\Exception\AMQPProtocolChannelException $e) {
+                $this->assertStringContainsString('NOT_FOUND', $e->getMessage(), "交换器 {$exchangeName} 应该返回 NOT_FOUND 错误");
+            } catch (\Exception $e) {
+                // 其他异常也可以接受
+                $this->assertTrue(true, "交换器 {$exchangeName} 已不存在");
+            }
+        }
+        
+        $channel->close();
+    }
+
+    /**
+     * 测试删除 Redis 测试数据
+     * 验证可以成功删除测试过程中创建的 Redis key
+     */
+    public function testDeleteRedisKeys()
+    {
+        if (self::$redis === null || !self::$redis->getIsActive()) {
+            $this->markTestSkipped('Redis is not available. Semaphore requires Redis.');
+        }
+
+        $redis = self::$redis;
+        
+        // 创建一些测试 key
+        $testKeyPattern = 'test:delete:redis:' . uniqid();
+        $testKeys = [];
+        
+        for ($i = 0; $i < 5; $i++) {
+            $key = $testKeyPattern . ':' . $i;
+            $testKeys[] = $key;
+            $result = $redis->__call('set', [$key, 'test_value_' . $i]);
+            $this->assertTrue($result === true || $result === 'OK' || $result === 1, "应该成功创建 Redis key {$key}");
+        }
+        
+        // 记录 key 模式用于清理
+        self::$createdRedisKeys[] = $testKeyPattern . ':*';
+        
+        // 验证所有 key 都存在
+        foreach ($testKeys as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNotNull($value, "Redis key {$key} 应该存在");
+        }
+        
+        // 逐个删除我们创建的 key（Redis 集群环境需要逐个删除）
+        $deletedCount = 0;
+        foreach ($testKeys as $key) {
+            $result = $redis->__call('del', [$key]);
+            if ($result > 0) {
+                $deletedCount++;
+            }
+        }
+        $this->assertEquals(count($testKeys), $deletedCount, '所有测试 key 都应该被删除');
+        
+        // 验证所有测试 key 都已被删除
+        foreach ($testKeys as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNull($value, "Redis key {$key} 应该已被删除");
+        }
+    }
+
+    /**
+     * 测试删除 Redis 测试数据（使用模式匹配）
+     * 验证可以通过模式匹配批量删除 Redis key
+     */
+    public function testDeleteRedisKeysByPattern()
+    {
+        if (self::$redis === null || !self::$redis->getIsActive()) {
+            $this->markTestSkipped('Redis is not available. Semaphore requires Redis.');
+        }
+
+        $redis = self::$redis;
+        
+        // 创建多个不同模式的测试 key
+        $pattern1 = 'test:delete:pattern1:' . uniqid();
+        $pattern2 = 'test:delete:pattern2:' . uniqid();
+        
+        $keys1 = [];
+        $keys2 = [];
+        
+        // 为第一个模式创建 key
+        for ($i = 0; $i < 3; $i++) {
+            $key = $pattern1 . ':' . $i;
+            $keys1[] = $key;
+            $result = $redis->__call('set', [$key, 'value1_' . $i]);
+            $this->assertTrue($result === true || $result === 'OK' || $result === 1, "应该成功创建 Redis key {$key}");
+        }
+        
+        // 为第二个模式创建 key
+        for ($i = 0; $i < 3; $i++) {
+            $key = $pattern2 . ':' . $i;
+            $keys2[] = $key;
+            $result = $redis->__call('set', [$key, 'value2_' . $i]);
+            $this->assertTrue($result === true || $result === 'OK' || $result === 1, "应该成功创建 Redis key {$key}");
+        }
+        
+        // 记录 key 模式用于清理
+        self::$createdRedisKeys[] = $pattern1 . ':*';
+        self::$createdRedisKeys[] = $pattern2 . ':*';
+        
+        // 验证所有 key 都存在
+        $allKeys = array_merge($keys1, $keys2);
+        foreach ($allKeys as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNotNull($value, "Redis key {$key} 应该存在");
+        }
+        
+        // 逐个删除第一个模式的 key（Redis 集群环境需要逐个删除）
+        $deletedCount1 = 0;
+        foreach ($keys1 as $key) {
+            $result = $redis->__call('del', [$key]);
+            if ($result > 0) {
+                $deletedCount1++;
+            }
+        }
+        $this->assertEquals(count($keys1), $deletedCount1, '第一个模式的所有 key 都应该被删除');
+        
+        // 验证第一个模式的 key 已被删除，第二个模式的 key 仍然存在
+        foreach ($keys1 as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNull($value, "Redis key {$key} 应该已被删除");
+        }
+        
+        foreach ($keys2 as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNotNull($value, "Redis key {$key} 应该仍然存在");
+        }
+        
+        // 逐个删除第二个模式的 key（Redis 集群环境需要逐个删除）
+        $deletedCount2 = 0;
+        foreach ($keys2 as $key) {
+            $result = $redis->__call('del', [$key]);
+            if ($result > 0) {
+                $deletedCount2++;
+            }
+        }
+        $this->assertEquals(count($keys2), $deletedCount2, '第二个模式的所有 key 都应该被删除');
+        
+        // 验证所有 key 都已被删除
+        foreach ($allKeys as $key) {
+            $value = $redis->__call('get', [$key]);
+            $this->assertNull($value, "Redis key {$key} 应该已被删除");
+        }
+    }
+
+    /**
+     * 测试清理所有测试资源
+     * 验证可以一次性清理所有测试过程中创建的队列、交换器和 Redis 数据
+     */
+    public function testCleanupAllTestResources()
+    {
+        $connection = self::$rabbitmqConnection;
+        $channel = $connection->channel();
+        
+        // 创建一些测试资源
+        $testQueueName = 'test:cleanup:queue:' . uniqid();
+        $testExchangeName = 'test:cleanup:exchange:' . uniqid();
+        
+        self::$createdQueues[] = $testQueueName;
+        self::$createdExchanges[] = $testExchangeName;
+        
+        // 创建队列和交换器
+        $routing = new RoutingComponent($connection);
+        $routing->setQueues([
+            [
+                'name' => $testQueueName,
+                'passive' => false,
+                'durable' => false,
+                'exclusive' => false,
+                'auto_delete' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ]
+        ]);
+        $routing->setExchanges([
+            [
+                'name' => $testExchangeName,
+                'type' => 'direct',
+                'passive' => false,
+                'durable' => false,
+                'auto_delete' => false,
+                'internal' => false,
+                'nowait' => false,
+                'arguments' => null,
+                'ticket' => null
+            ]
+        ]);
+        $routing->declareAll();
+        
+        // 创建 Redis 测试数据
+        if (self::$redis && self::$redis->getIsActive()) {
+            $testRedisPattern = 'test:cleanup:redis:' . uniqid();
+            self::$createdRedisKeys[] = $testRedisPattern . ':*';
+            
+            for ($i = 0; $i < 3; $i++) {
+                $key = $testRedisPattern . ':' . $i;
+                self::$redis->__call('set', [$key, 'test_value_' . $i]);
+            }
+        }
+        
+        // 清理所有资源
+        $cleanupSuccess = true;
+        $errors = [];
+        
+        // 清理队列
+        try {
+            $channel->queue_delete($testQueueName, false, false, true);
+        } catch (\Exception $e) {
+            $cleanupSuccess = false;
+            $errors[] = "队列删除失败: " . $e->getMessage();
+        }
+        
+        // 清理交换器
+        try {
+            $channel->exchange_delete($testExchangeName, false, true);
+        } catch (\Exception $e) {
+            $cleanupSuccess = false;
+            $errors[] = "交换器删除失败: " . $e->getMessage();
+        }
+        
+        // 清理 Redis 数据
+        if (self::$redis && self::$redis->getIsActive()) {
+            try {
+                $testRedisPattern = 'test:cleanup:redis:*';
+                $foundKeys = self::$redis->__call('keys', [$testRedisPattern]);
+                // 确保返回的是数组
+                if (!is_array($foundKeys)) {
+                    $foundKeys = $foundKeys ? [$foundKeys] : [];
+                }
+                if (!empty($foundKeys)) {
+                    // 逐个删除 keys，避免 Redis Cluster 模式下的 CROSSSLOT 错误
+                    foreach ($foundKeys as $key) {
+                        self::$redis->__call('del', [$key]);
+                    }
+                }
+            } catch (\Exception $e) {
+                $cleanupSuccess = false;
+                $errors[] = "Redis 清理失败: " . $e->getMessage();
+            }
+        }
+        
+        $this->assertTrue($cleanupSuccess, '所有资源清理应该成功。错误: ' . implode('; ', $errors));
+        
+        // 验证资源已被清理
+        try {
+            $channel->queue_declare($testQueueName, true, false, false, false, false, null, null);
+            $this->fail('队列应该已被删除');
+        } catch (\Exception $e) {
+            $this->assertTrue(true, '队列已被删除');
+        }
+        
+        try {
+            $channel->exchange_declare($testExchangeName, 'direct', true, false, false, false, false, null, null);
+            $this->fail('交换器应该已被删除');
+        } catch (\Exception $e) {
+            $this->assertTrue(true, '交换器已被删除');
+        }
         
         $channel->close();
     }

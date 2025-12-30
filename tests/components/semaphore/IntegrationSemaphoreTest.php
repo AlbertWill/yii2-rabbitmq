@@ -76,7 +76,10 @@ class IntegrationSemaphoreTest extends TestCase
                 // 清理测试使用的 key
                 $testKeys = self::$redis->__call('keys', ['test:semaphore:*']);
                 if (!empty($testKeys)) {
-                    self::$redis->__call('del', $testKeys);
+                    // 逐个删除 keys，避免 Redis Cluster 模式下的 CROSSSLOT 错误
+                    foreach ($testKeys as $key) {
+                        self::$redis->__call('del', [$key]);
+                    }
                 }
             } catch (\Exception $e) {
                 // 忽略清理错误
