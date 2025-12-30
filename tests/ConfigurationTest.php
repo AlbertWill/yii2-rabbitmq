@@ -108,7 +108,8 @@ class ConfigurationTest extends TestCase
             ['Semaphore ttl is not a positive integer', array_merge($required, ['semaphore' => ['ttl' => 0]]), InvalidConfigException::class],
             ['Semaphore ttl is not a positive integer (negative)', array_merge($required, ['semaphore' => ['ttl' => -1]]), InvalidConfigException::class],
             ['Semaphore ttl is not an integer', array_merge($required, ['semaphore' => ['ttl' => 'not_int']]), InvalidConfigException::class],
-            ['Semaphore acquire_sleep is not a non-negative integer', array_merge($required, ['semaphore' => ['acquire_sleep' => -1]]), InvalidConfigException::class],
+            ['Semaphore acquire_sleep is not a positive integer', array_merge($required, ['semaphore' => ['acquire_sleep' => -1]]), InvalidConfigException::class],
+            ['Semaphore acquire_sleep is not a positive integer (zero)', array_merge($required, ['semaphore' => ['acquire_sleep' => 0]]), InvalidConfigException::class],
             ['Semaphore acquire_sleep is not an integer', array_merge($required, ['semaphore' => ['acquire_sleep' => 'not_int']]), InvalidConfigException::class],
             // Consumer semaphore configuration tests
             ['Consumer semaphore is not an array', array_merge($required, ['consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => 'not_an_array']]]), InvalidConfigException::class],
@@ -119,7 +120,8 @@ class ConfigurationTest extends TestCase
             ['Consumer semaphore limit is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['limit' => 'not_int']]]]), InvalidConfigException::class],
             ['Consumer semaphore ttl is not a positive integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['ttl' => 0]]]]), InvalidConfigException::class],
             ['Consumer semaphore ttl is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['ttl' => 'not_int']]]]), InvalidConfigException::class],
-            ['Consumer semaphore acquire_sleep is not a non-negative integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => -1]]]]), InvalidConfigException::class],
+            ['Consumer semaphore acquire_sleep is not a positive integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => -1]]]]), InvalidConfigException::class],
+            ['Consumer semaphore acquire_sleep is not a positive integer (zero)', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => 0]]]]), InvalidConfigException::class],
             ['Consumer semaphore acquire_sleep is not an integer', array_merge($required, ['queues' => [['name' => 'queue']], 'consumers' => [['name' => 'smth', 'callbacks' => ['queue' => 'callback'], 'semaphore' => ['acquire_sleep' => 'not_int']]]]), InvalidConfigException::class],
         ];
     }

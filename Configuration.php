@@ -315,8 +315,8 @@ class Configuration extends Component
         }
 
         if (isset($this->semaphore['acquire_sleep']) && $this->semaphore['acquire_sleep'] !== null) {
-            if (!is_int($this->semaphore['acquire_sleep']) || $this->semaphore['acquire_sleep'] < 0) {
-                throw new InvalidConfigException("Semaphore option `acquire_sleep` should be a non-negative integer.");
+            if (!is_int($this->semaphore['acquire_sleep']) || $this->semaphore['acquire_sleep'] < 1) {
+                throw new InvalidConfigException("Semaphore option `acquire_sleep` should be a positive integer (>= 1).");
             }
         }
     }
@@ -509,8 +509,8 @@ class Configuration extends Component
                 }
 
                 if (isset($consumer['semaphore']['acquire_sleep']) && $consumer['semaphore']['acquire_sleep'] !== null) {
-                    if (!is_int($consumer['semaphore']['acquire_sleep']) || $consumer['semaphore']['acquire_sleep'] < 0) {
-                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `acquire_sleep` should be a non-negative integer.");
+                    if (!is_int($consumer['semaphore']['acquire_sleep']) || $consumer['semaphore']['acquire_sleep'] < 1) {
+                        throw new InvalidConfigException("Consumer `{$consumer['name']}` semaphore option `acquire_sleep` should be a positive integer (>= 1).");
                     }
                 }
             }

@@ -42,12 +42,16 @@ class Consumer extends BaseRabbitMQ
 
     protected $name = 'unnamed';
 
+    /** @var string 消费者唯一标识，用于生成 consumer tag */
     private $id;
 
+    /** @var int 目标消息数量，0 表示无限消费 */
     private $target;
 
+    /** @var int 已消费的消息数量 */
     private $consumed = 0;
 
+    /** @var bool 强制停止标志，由信号处理器设置 */
     private $forceStop = false;
 
     /** @var int 重试计数 */
@@ -64,6 +68,9 @@ class Consumer extends BaseRabbitMQ
 
     /** @var bool 是否已获取信号量 */
     private $semaphoreAcquired = false;
+
+    /** @var bool 是否已启动消费（已调用 startConsuming） */
+    private $consumingStarted = false;
 
     /**
      * @param AbstractConnection $conn
@@ -282,10 +289,14 @@ class Consumer extends BaseRabbitMQ
     public function consume($msgAmount = 0): int
     {
         $this->target = $msgAmount;
-        $this->setup();
 
-        // 在循环外获取信号量，在整个消费生命周期内保持
-        $this->acquireSemaphore();
+        // 获取信号量
+        if (!$this->acquireSemaphore()) {
+            return ExitCode::OK;
+        }
+
+        // 获取信号量成功，注册消费者
+        $this->setup();
 
         try {
             while (count($this->getChannel()->callbacks)) {
@@ -323,10 +334,16 @@ class Consumer extends BaseRabbitMQ
      */
     public function stopConsuming()
     {
+        if (!$this->consumingStarted) {
+            return;
+        }
+
         foreach ($this->queues as $name => $options)
         {
             $this->getChannel()->basic_cancel($this->getConsumerTag($name), false, true);
         }
+
+        $this->consumingStarted = false;
     }
 
     /**
@@ -336,6 +353,7 @@ class Consumer extends BaseRabbitMQ
     public function stopDaemon()
     {
         $this->forceStop = true;
+        // 取消订阅
         $this->stopConsuming();
         // 释放信号量
         $this->releaseSemaphore();
@@ -397,6 +415,7 @@ class Consumer extends BaseRabbitMQ
                 }
             );
         }
+        $this->consumingStarted = true;
     }
 
     /**
@@ -682,36 +701,27 @@ class Consumer extends BaseRabbitMQ
      * 获取信号量
      * 在消费者启动时调用，在整个消费生命周期内保持信号量
      *
-     * @throws \Exception 获取失败时抛出异常
+     * @return bool 返回 true 表示成功获取，返回 false 表示需要退出（被信号中断或 acquireSleep=0 时达到 limit）
      */
-    private function acquireSemaphore(): void
+    private function acquireSemaphore(): bool
     {
         if ($this->semaphore === null || $this->semaphoreAcquired) {
-            return;
+            return true;
         }
 
         // 尝试获取信号量
         if ($this->semaphore->acquire_wait()) {
             $this->semaphoreAcquired = true;
-            return;
+            return true;
         }
 
-        // 获取失败或被信号中断
         $this->semaphoreAcquired = false;
 
         // 处理挂起的信号，确保信号处理器能够执行
         $this->dispatchSignals();
 
-        // 如果 forceStop 为 true，说明是被信号中断，信号处理器已执行（stopDaemon），优雅退出
-        if ($this->forceStop) {
-            $this->logger->logDebug("信号量获取被信号中断，forceStop=true，优雅退出");
-            return;
-        }
-
-        // 正常的获取失败（达到 limit），抛出异常
-        throw new RuntimeException(
-            "Failed to acquire semaphore for consumer '{$this->name}': Semaphore limit reached"
-        );
+        // 返回 false 让上层优雅退出
+        return false;
     }
 
     /**
@@ -726,8 +736,14 @@ class Consumer extends BaseRabbitMQ
 
         try {
             $this->semaphore->release();
+
+            $this->logger->logDebug("[Semaphore] 信号量已释放!");
+
         } catch (\Exception $e) {
             // 释放失败不影响主流程，继续执行
+
+            $this->logger->logDebug("[Semaphore] 信号量释放失败!");
+
         }
         $this->semaphoreAcquired = false;
     }

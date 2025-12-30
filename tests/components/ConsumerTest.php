@@ -259,6 +259,8 @@ class ConsumerTest extends TestCase
             ->getMock();
         $channel->expects($this->once())
             ->method('basic_cancel');
+        // 模拟已经注册了消费者（有 callbacks）
+        $channel->callbacks = ['queue-unnamed-123' => 'callback'];
         $connection->method('channel')
             ->willReturn($channel);
         $routing = $this->createMock(Routing::class);
@@ -270,6 +272,10 @@ class ConsumerTest extends TestCase
             ->setMethods(['maybeStopConsumer'])
             ->getMock();
         $consumer->setQueues(['queue' => 'callback']);
+        // 先调用 getChannel() 来设置 $this->ch，确保检查逻辑能正确工作
+        $consumer->getChannel();
+        // 模拟已经启动了消费
+        $this->setInaccessibleProperty($consumer, 'consumingStarted', true);
         $consumer->stopDaemon();
     }
 
@@ -394,6 +400,8 @@ class ConsumerTest extends TestCase
             ->getMock();
         $channel->expects($this->once())
             ->method('basic_cancel');
+        // 模拟已经注册了消费者（有 callbacks）
+        $channel->callbacks = ['queue-unnamed-123' => 'callback'];
         $connection->method('channel')
             ->willReturn($channel);
         $routing = $this->createMock(Routing::class);
@@ -406,8 +414,13 @@ class ConsumerTest extends TestCase
         $consumer = new Consumer($connection, $routing, $logger, false, $semaphore);
         $consumer->setQueues(['queue' => 'callback']);
         
+        // 先调用 getChannel() 来设置 $this->ch，确保检查逻辑能正确工作
+        $consumer->getChannel();
+        
         // 先获取信号量（模拟已获取状态）
         $this->setInaccessibleProperty($consumer, 'semaphoreAcquired', true);
+        // 模拟已经启动了消费
+        $this->setInaccessibleProperty($consumer, 'consumingStarted', true);
         
         $consumer->stopDaemon();
     }
@@ -531,22 +544,28 @@ class ConsumerTest extends TestCase
         $connection->method('channel')
             ->willReturn($channel);
         $routing = $this->createMock(Routing::class);
-        $routing->expects($this->once())
+        // 信号量获取被信号中断时，setup() 不会被执行，所以 declareAll() 不应该被调用
+        $routing->expects($this->never())
             ->method('declareAll');
         $logger = $this->createSilentLogger();
         
         $semaphore = $this->createMock(Semaphore::class);
         $semaphore->expects($this->once())
             ->method('acquire_wait')
-            ->willReturn(false); // 返回 false 表示获取失败（达到 limit）
+            ->willReturn(false); // 返回 false 表示 sleep() 被信号中断
         
         $consumer = new Consumer($connection, $routing, $logger, true, $semaphore);
         $consumer->setQueues(['queue' => 'callback']);
         $consumer->setName('test-consumer');
         
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage("Failed to acquire semaphore for consumer 'test-consumer': Semaphore limit reached");
-        $consumer->consume();
+        // acquire_wait() 返回 false 时，acquireSemaphore() 会检查 forceStop
+        // 如果 forceStop 为 true，会返回 false，consume() 会直接返回 ExitCode::OK
+        // 这里模拟信号中断的情况，设置 forceStop 为 true
+        $this->setInaccessibleProperty($consumer, 'forceStop', true);
+        
+        // 应该优雅退出，不抛出异常
+        $result = $consumer->consume();
+        $this->assertEquals(Controller::EXIT_CODE_NORMAL, $result);
     }
 
     public function testSemaphoreReleaseFailure()

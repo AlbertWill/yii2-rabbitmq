@@ -80,7 +80,7 @@ abstract class Semaphore
     {
         $this->logger->logDebug("[Semaphore] acquire_wait() 开始，key: {$this->key}, limit: {$this->limit}, acquireSleep: {$this->acquireSleep}");
 
-        // 如果未设置等待间隔时间，直接尝试一次获取
+        // 如果 acquireSleep <= 0（理论上不应该发生，配置验证已确保 >= 1），直接尝试一次获取
         if ($this->acquireSleep <= 0) {
             $result = $this->acquire();
             return $result;
@@ -97,7 +97,7 @@ abstract class Semaphore
             $acquireEnd = microtime(true);
             $acquireTime = round(($acquireEnd - $acquireStart) * 1000, 2);
             if ($result) {
-                $this->logger->logDebug("[Semaphore] 成功获取信号量，尝试次数: {$attemptCount}, 耗时: {$acquireTime}ms, key: {$this->key}");
+                $this->logger->logDebug("[Semaphore] 第 {$attemptCount} 次获取信号量成功, 耗时: {$acquireTime}ms, key: {$this->key}");
                 return true;
             }
 
@@ -108,7 +108,7 @@ abstract class Semaphore
             $sleepTimeWithJitter = $this->acquireSleep + mt_rand(-$jitterRange, $jitterRange);
             $sleepTimeWithJitter = max(1, $sleepTimeWithJitter); // 至少等待 1 秒
 
-            $this->logger->logDebug("[Semaphore] 第 {$attemptCount} 次获取信号量失败，等待时间: {$sleepTimeWithJitter}秒（基础: {$this->acquireSleep}秒, 浮动范围: ±{$jitterRange}秒）, key: {$this->key}");
+            $this->logger->logDebug("[Semaphore] 第 {$attemptCount} 次获取信号量失败, 等待{$sleepTimeWithJitter}秒（基础: {$this->acquireSleep}秒, 浮动范围: ±{$jitterRange}秒）, key: {$this->key}");
 
             // 如果返回值 > 0，说明被信号中断，应该处理信号并返回 false 让上层判断
             $sleepStart = microtime(true);
@@ -118,7 +118,7 @@ abstract class Semaphore
 
             // 如果 sleep() 被信号中断（返回值 > 0），返回 false 让上层处理信号
             if ($remainingSeconds > 0) {
-                $this->logger->logDebug("[Semaphore] sleep 被信号中断，剩余等待时间: {$remainingSeconds}秒, 实际等待: {$actualSleepTimeElapsed}秒, key: {$this->key}");
+                $this->logger->logDebug("[Semaphore] sleep 被信号中断, 剩余时间: {$remainingSeconds}秒, 实际等待: {$actualSleepTimeElapsed}秒, key: {$this->key}");
 
                 // 返回 false，让上层（Consumer）处理挂起的信号并根据 forceStop 标志判断是否退出
                 return false;

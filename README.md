@@ -370,7 +370,7 @@ Semaphore is a distributed concurrency control mechanism that uses Redis to coor
 | `redis_component_name` | string | `'redis'` | Name of the Redis component in Yii2 application |
 | `limit` | int | `-1` | Maximum concurrent consumer instances. When `<= 0`, semaphore is disabled |
 | `ttl` | int | `300` | Time-to-live in seconds. Semaphore key expires after this time if no heartbeat |
-| `acquire_sleep` | int | `60` | Sleep interval (seconds) when semaphore acquisition fails. Set to `0` to fail immediately |
+| `acquire_sleep` | int | `60` | Sleep interval (seconds) when semaphore acquisition fails. Minimum value is 1 |
 
 **Semaphore Key Format:**
 The semaphore key is automatically generated as: `rabbitmq:semaphore:{app_id}:{consumer_name}` to avoid conflicts between different projects and consumers.
@@ -391,7 +391,7 @@ Example:
 - The semaphore is automatically acquired when the consumer starts and released when it stops
 - During reconnection, the semaphore state is preserved to maintain proper concurrency control
 - If a consumer crashes without releasing the semaphore, it will expire after `ttl` seconds
-- Set `acquire_sleep` to `0` if you want consumers to exit immediately when the limit is reached, rather than waiting
+- `acquire_sleep` must be at least 1 second. The system will continuously retry acquiring the semaphore until successful or interrupted by a signal
 
 **Recommended Configuration Strategy for `acquire_sleep`:**
 
@@ -448,9 +448,9 @@ Where:
 - **Random Jitter**: The system automatically adds ±20% random jitter to spread retry requests and reduce Redis pressure spikes
 
 **Special Cases:**
-- **Fast Response Required**: Use smaller values (5-10 seconds) but ensure Redis load is acceptable
+- **Fast Response Required**: Use smaller values (1-10 seconds) but ensure Redis load is acceptable
 - **Resource Constrained**: If Redis performance is limited or network latency is high, use larger values (30-60 seconds)
-- **Test Environment**: Can use smaller values (1-5 seconds) for faster testing
+- **Test Environment**: Can use minimum value (1 second) for faster testing
 
 **Use Cases:**
 - **Kubernetes Auto-scaling**: Limit concurrent consumer pods to prevent resource exhaustion
